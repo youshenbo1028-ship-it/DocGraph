@@ -115,9 +115,15 @@ async function onExtract() {
   try {
     const summary = await api.extract(pid.value!, selectedGroupId.value, apiCfg.value);
     await loadProject();
-    toast("success",
-      `完成：${summary.documents} 篇 / ${summary.entities} 实体 / ${summary.relations} 关系` +
-      (summary.errors.length ? `（失败 ${summary.errors.length} 篇）` : ""));
+    const failed = summary.errors.length;
+    if (failed) {
+      const firstErr = summary.errors[0]?.error ?? "";
+      toast("error",
+        `抽取失败 ${failed} 篇：${firstErr.slice(0, 160)}`);
+    } else {
+      toast("success",
+        `完成：${summary.documents} 篇 / ${summary.entities} 实体 / ${summary.relations} 关系`);
+    }
   } catch (e: any) {
     toast("error", String(e?.message ?? e));
   } finally {

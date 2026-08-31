@@ -25,7 +25,8 @@ class OpenAICompatibleExtractor(Extractor):
         temperature: float = 0.2,
         max_retries: int = 2,
     ) -> None:
-        self._client = OpenAI(base_url=base_url, api_key=api_key)
+        # 为响应与连接设置合理超时，避免某次调用挂起数分钟（默认 600s）
+        self._client = OpenAI(base_url=base_url, api_key=api_key, timeout=90.0, max_retries=1)
         self._model = model
         self._temperature = temperature
         self._max_retries = max_retries

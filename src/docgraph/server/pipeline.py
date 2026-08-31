@@ -1,11 +1,12 @@
 """抽取管线编排（FR-305）。
 
-单文档流程：解析分块 -> 逐块 LLM 抽取 -> 去重合并 -> 入库。
+单文档流程：解析分块 -> 逐块 LLM 抽取（可并行）-> 去重合并 -> 入库。
 新文件场景：抽取前注入同组既有实体作为「已知实体上下文」（FR-311）。
 """
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
 from ..core.models import DOC_STATUS_EXTRACTED, DOC_STATUS_EXTRACTING, DOC_STATUS_FAILED, DOC_STATUS_PARSED, DOC_STATUS_PARSING, Document
@@ -32,9 +33,15 @@ def extract_group(
     group_id: str,
     extractor_factory: ExtractorFactory,
 ) -> dict:
-    """对分组内已解析文档执行抽取（FR-305 / FR-310 / FR-311）。"""
+    """对分组内文档执行抽取（FR-305 / FR-310 / FR-311）。
+
+    分块并行调用 LLM（并发数默认 3，可用分组 extract_config.concurrency 覆盖）。
+    """
     extractor = extractor_factory(group_id=group_id)
-    # 处理所有未在进行的文档（含待解析的 pending），避免跳过用户刚导入的文件
+    group = store.get_group(group_id)
+    concurrency = int((group.extract_config or {}).get("concurrency", 3)) if group else 3
+    concurrency = max(1, min(concurrency, 8))
+
     docs = [
         d
         for d in store.list_documents(project_id, group_id)
@@ -46,7 +53,6 @@ def extract_group(
         store.set_document_status(doc.id, DOC_STATUS_EXTRACTING)
         chunks = store.list_chunks(doc.id)
         if not chunks:
-            # 未解析（可能导入后未调 parse）-> 先解析
             try:
                 parse_document(store, doc)
                 chunks = store.list_chunks(doc.id)
@@ -55,14 +61,19 @@ def extract_group(
                 summary["errors"].append({"document": doc.file_name, "error": str(exc)})
                 continue
         try:
-            # FR-311：注入同组既有实体作为已知实体上下文
             known = [n["data"]["label"] for n in store.get_graph(project_id, group_id)["nodes"]][:KNOWN_ENTITIES_LIMIT]
-            candidates = []
-            relations = []
-            for chunk in chunks:
-                result = extractor.extract(chunk.text, known_entities=known, chunk_id=chunk.id)
-                candidates.extend(result.entities)
-                relations.extend(result.relations)
+            candidates: list = []
+            relations: list = []
+            # 并行分块抽取（FR-308 并发）
+            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                futures = {
+                    pool.submit(extractor.extract, c.text, known_entities=known, chunk_id=c.id): c
+                    for c in chunks
+                }
+                for fut in as_completed(futures):
+                    result = fut.result()  # 某个块失败则抛出，交由外层标记失败
+                    candidates.extend(result.entities)
+                    relations.extend(result.relations)
             merged = merge_entities(candidates, relations)
             store.save_extraction(doc.id, merged.entities, merged.relations)
             store.set_document_status(doc.id, DOC_STATUS_EXTRACTED)
