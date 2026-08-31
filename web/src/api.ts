@@ -88,6 +88,12 @@ export const api = {
       json("POST", { base_url: cfg.base_url, api_key: cfg.api_key, model: cfg.model }),
     ),
 
+  entityDetail: (pid: string, eid: string) =>
+    request("/api/projects/" + pid + "/entities/" + eid),
+
+  relationDetail: (pid: string, rid: string) =>
+    request("/api/projects/" + pid + "/relations/" + rid),
+
   downloadExport: (pid: string, kind: "nodes.csv" | "edges.csv" | "graph.json", groupId?: string) =>
     downloadFromApi(
       "/api/projects/" + pid + "/export/" + kind +

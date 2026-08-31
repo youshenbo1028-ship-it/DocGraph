@@ -6,7 +6,7 @@ import cytoscapeSvg from "cytoscape-svg";
 cytoscape.use(cytoscapeSvg as any);
 
 const props = defineProps<{ graph: { nodes: any[]; edges: any[] } }>();
-const emit = defineEmits<{ (e: "select", data: any): void }>();
+const emit = defineEmits<{ (e: "select", sel: { kind: "node" | "edge"; data: any }): void }>();
 
 const container = ref<HTMLDivElement | null>(null);
 let cy: cytoscape.Core | null = null;
@@ -31,6 +31,7 @@ onMounted(() => {
       {
         selector: "node",
         style: {
+          "grabbable": true,
           label: "data(label)",
           width: 40,
           height: 40,
@@ -81,12 +82,16 @@ onMounted(() => {
     const neighbor = node.closedNeighborhood();
     cy.elements().removeClass("faded");
     cy.elements().not(neighbor).addClass("faded");
-    emit("select", node.data());
+    emit("select", { kind: "node", data: node.data() });
+  });
+  cy.on("tap", "edge", (evt) => {
+    cy.elements().removeClass("faded");
+    emit("select", { kind: "edge", data: evt.target.data() });
   });
   cy.on("tap", (evt) => {
     if (evt.target === cy) {
       cy.elements().removeClass("faded");
-      emit("select", null);
+      emit("select", null as any);
     }
   });
   render();

@@ -11,7 +11,9 @@ const groups = ref<any[]>([]);
 const documents = ref<any[]>([]);
 const selectedGroupId = ref<string | null>(null);
 const fullGraph = ref<{ nodes: any[]; edges: any[] }>({ nodes: [], edges: [] });
-const selected = ref<any>(null);
+const selected = ref<{ kind: "node" | "edge"; data: any } | null>(null);
+const detail = ref<any>(null);
+const detailLoading = ref(false);
 const loading = ref(false);
 const hasKey = ref(false);
 const search = ref("");
@@ -156,7 +158,18 @@ async function onCreateGroup() {
   }
 }
 function selectGroup(id: string) { selectedGroupId.value = id || null; refreshGraph(); }
-function onSelect(data: any) { selected.value = data; }
+async function onSelect(sel: any) {
+  selected.value = sel;
+  detail.value = null;
+  if (!sel || !pid.value) return;
+  detailLoading.value = true;
+  try {
+    detail.value = sel.kind === "node"
+      ? await api.entityDetail(pid.value, sel.data.id)
+      : await api.relationDetail(pid.value, sel.data.id);
+  } catch { detail.value = null; }
+  finally { detailLoading.value = false; }
+}
 
 function downloadDataUrl(url: string | null, filename: string) {
   if (!url) return;
@@ -300,17 +313,41 @@ onMounted(async () => {
       <!-- 右：详情 -->
       <aside class="panel right">
         <div class="sec-head">详情</div>
-        <template v-if="selected">
-          <div class="detail-head">
-            <span class="dot" :style="{ background: detailColor(selected.type) }" />
-            <h3 class="detail-name">{{ selected.label }}</h3>
+        <template v-if="selected && detail">
+          <template v-if="selected.kind === 'node'">
+            <div class="detail-head">
+              <span class="dot" :style="{ background: detailColor(detail.type) }" />
+              <h3 class="detail-name">{{ detail.canonical_name }}</h3>
+            </div>
+            <div class="detail-row"><span class="k">类型</span><span class="v">{{ detail.type || "-" }}</span></div>
+            <div class="detail-row"><span class="k">置信度</span><span class="v">{{ detail.confidence ? detail.confidence.toFixed(2) : "-" }}</span></div>
+            <div class="detail-row"><span class="k">别名</span><span class="v">{{ (detail.aliases || []).join("、") || "-" }}</span></div>
+            <div class="detail-row"><span class="k">描述</span><span class="v">{{ detail.description || "-" }}</span></div>
+            <div class="detail-row"><span class="k">来源文档</span><span class="v">{{ (detail.source_docs || []).join("、") || "-" }}</span></div>
+          </template>
+          <template v-else>
+            <div class="detail-head">
+              <h3 class="detail-name">
+                {{ detail.source }}
+                <span class="rel-type"> —{{ detail.type }}→ </span>
+                {{ detail.target }}
+              </h3>
+            </div>
+            <div class="detail-row"><span class="k">置信度</span><span class="v">{{ detail.confidence ? detail.confidence.toFixed(2) : "-" }}</span></div>
+            <div class="detail-row"><span class="k">来源文档</span><span class="v">{{ (detail.source_docs || []).join("、") || "-" }}</span></div>
+          </template>
+
+          <div class="sec-head" style="margin-top:14px">原文依据</div>
+          <div v-if="(detail.evidence || []).length" class="evidence">
+            <div v-for="(ev, i) in detail.evidence" :key="i" class="ev-item">
+              <div class="ev-quote">{{ typeof ev === "string" ? ev : ev.quote }}</div>
+              <div class="ev-src" v-if="typeof ev !== 'string'">—《{{ ev.document }}》{{ ev.page ? "第 " + ev.page + " 页" : "" }}</div>
+            </div>
           </div>
-          <div class="detail-row"><span class="k">类型</span><span class="v">{{ selected.type || "-" }}</span></div>
-          <div class="detail-row"><span class="k">置信度</span><span class="v">{{ selected.confidence ? selected.confidence.toFixed(2) : "-" }}</span></div>
-          <div class="detail-row"><span class="k">实体 ID</span><span class="v">{{ selected.id ? selected.id.slice(0, 10) + "…" : "-" }}</span></div>
-          <p class="detail-hint">点击节点查看其证据与关联实体</p>
+          <p v-else class="detail-hint">无直接原文摘录</p>
         </template>
-        <div v-else class="empty-mini">点击图谱中的节点<br />查看详情</div>
+        <div v-else-if="selected" class="empty-mini">加载详情…</div>
+        <div v-else class="empty-mini">点击图中的<span class="hlb">实体</span>或<span class="hlb">关系线</span><br />查看来源与原文依据</div>
       </aside>
     </main>
 
@@ -424,6 +461,12 @@ onMounted(async () => {
 .detail-row .k { color: var(--muted); }
 .detail-row .v { color: var(--text); max-width: 60%; text-align: right; word-break: break-all; }
 .detail-hint { color: var(--muted); font-size: 12px; margin-top: 14px; }
+.rel-type { color: var(--primary); font-weight: 600; margin: 0 4px; font-size: 13px; }
+.hlb { color: var(--primary); font-weight: 600; }
+.evidence { max-height: 400px; overflow-y: auto; }
+.ev-item { padding: 9px 11px; margin-bottom: 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); border-left: 3px solid var(--primary); }
+.ev-quote { font-size: 12.5px; line-height: 1.6; color: var(--text); }
+.ev-src { font-size: 11px; color: var(--muted); margin-top: 6px; text-align: right; }
 
 /* Toast */
 .toasts { position: fixed; top: 16px; right: 16px; z-index: 100; display: flex; flex-direction: column; gap: 8px; max-width: 360px; }

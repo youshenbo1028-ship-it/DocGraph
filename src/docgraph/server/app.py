@@ -359,6 +359,24 @@ def create_app() -> FastAPI:
         store = registry.open(pid)
         return store.get_graph(pid, group_id)
 
+    # ---------- 实体/关系详情与证据（来源依据，FR-307） ----------
+
+    @app.get("/api/projects/{pid}/entities/{eid}")
+    def entity_detail(pid: str, eid: str) -> dict:
+        store = registry.open(pid)
+        detail = store.get_entity_detail(eid)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="实体不存在")
+        return detail
+
+    @app.get("/api/projects/{pid}/relations/{rid}")
+    def relation_detail(pid: str, rid: str) -> dict:
+        store = registry.open(pid)
+        detail = store.get_relation(rid)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="关系不存在")
+        return detail
+
     # ---------- 设置（FR-801 / FR-802） ----------
 
     @app.get("/api/settings")

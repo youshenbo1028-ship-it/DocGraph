@@ -15,6 +15,9 @@ API_HOST = "127.0.0.1"
 API_PORT = 8765
 FRONTEND_DEV_URL = "http://127.0.0.1:5173"
 
+# 模块级窗口引用：pywebview 不会自动注入 self.window 到 js_api 实例
+_window: "webview.Window | None" = None
+
 
 def _start_server() -> None:
     import uvicorn
@@ -27,35 +30,35 @@ def _start_server() -> None:
 def _frontend_url() -> str:
     from docgraph.server.app import _dist_dir
 
-    if _dist_dir() is not None:  # 打包模式：内嵌静态资源由后端服务
+    if _dist_dir() is not None:
         return f"http://{API_HOST}:{API_PORT}/"
     return FRONTEND_DEV_URL
 
 
 class WindowApi:
-    """暴露给前端的窗口控制接口（前端 window.pywebview.api.*）。
-
-    pywebview 会把当前 window 注入到 api 实例的 self.window 属性。
-    """
+    """暴露给前端的窗口控制接口（前端 window.pywebview.api.*）。"""
 
     def minimize(self) -> None:
-        self.window.minimize()
+        if _window is not None:
+            _window.minimize()
 
     def toggle_maximize(self) -> None:
-        if self.window.maximized:
-            self.window.restore()
-        else:
-            self.window.maximize()
+        if _window is not None:
+            if _window.maximized:
+                _window.restore()
+            else:
+                _window.maximize()
 
     def close(self) -> None:
-        self.window.destroy()
+        if _window is not None:
+            _window.destroy()
 
 
 def main() -> None:
+    global _window
     threading.Thread(target=_start_server, daemon=True).start()
 
-    # js_api 传给 create_window；frameless 去掉系统标题栏，由前端自绘
-    webview.create_window(
+    _window = webview.create_window(
         "DocGraph",
         url=_frontend_url(),
         width=1440,

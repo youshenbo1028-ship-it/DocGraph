@@ -96,6 +96,20 @@ class DuplicateNameError(ValueError):
     """项目内已存在同名文档（FR-310：不允许重名）。"""
 
 
+def _extract_sentence(text: str, index: int, max_len: int = 160) -> str:
+    """提取包含 index 的句子片段，作为证据原文。"""
+    if index < 0:
+        return text[:max_len]
+    start = max(text.rfind("。", 0, index), text.rfind("！", 0, index), text.rfind("？", 0, index), text.rfind(".", 0, index))
+    end_candidates = [
+        t for t in (text.find("。", index), text.find("！", index), text.find("？", index), text.find(".", index))
+        if t != -1
+    ]
+    end = min(end_candidates) + 1 if end_candidates else index + max_len
+    start = start + 1 if start != -1 else max(0, index - 40)
+    return text[start:end].strip()[:max_len]
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -374,6 +388,79 @@ class ProjectStore:
             status=row["status"],
             sha256=row["sha256"],
         )
+
+
+    # ---------- 实体 / 关系详情与证据（来源依据） ----------
+
+    def doc_name(self, doc_id: str) -> str:
+        row = self._db.execute("SELECT path FROM documents WHERE id=?", (doc_id,)).fetchone()
+        return Path(row["path"]).name if row else doc_id
+
+    def get_entity(self, entity_id: str) -> Entity | None:
+        row = self._db.execute("SELECT * FROM entities WHERE id=?", (entity_id,)).fetchone()
+        if row is None:
+            return None
+        return Entity(
+            id=row["id"],
+            canonical_name=row["canonical_name"],
+            type=row["type"],
+            description=row["description"],
+            confidence=row["confidence"],
+            aliases=json.loads(row["aliases_json"]),
+            source_docs=json.loads(row["source_docs_json"]),
+        )
+
+    def get_relation(self, relation_id: str) -> dict | None:
+        row = self._db.execute("SELECT * FROM relations WHERE id=?", (relation_id,)).fetchone()
+        if row is None:
+            return None
+        src = self._db.execute("SELECT canonical_name FROM entities WHERE id=?", (row["source_entity_id"],)).fetchone()
+        tgt = self._db.execute("SELECT canonical_name FROM entities WHERE id=?", (row["target_entity_id"],)).fetchone()
+        return {
+            "id": row["id"],
+            "source": src["canonical_name"] if src else row["source_entity_id"],
+            "target": tgt["canonical_name"] if tgt else row["target_entity_id"],
+            "type": row["type"],
+            "confidence": row["confidence"],
+            "evidence": json.loads(row["evidence_json"]),
+            "source_docs": [self.doc_name(d) for d in json.loads(row["source_docs_json"])],
+        }
+
+    def get_entity_detail(self, entity_id: str) -> dict | None:
+        """实体详情：含来源文档与原文摘录（依据）。"""
+        e = self.get_entity(entity_id)
+        if e is None:
+            return None
+        return {
+            "id": e.id,
+            "canonical_name": e.canonical_name,
+            "type": e.type,
+            "description": e.description,
+            "confidence": e.confidence,
+            "aliases": e.aliases,
+            "source_docs": [self.doc_name(d) for d in e.source_docs],
+            "evidence": self.find_entity_evidence(entity_id),
+        }
+
+    def find_entity_evidence(self, entity_id: str, limit: int = 5) -> list[dict]:
+        """在实体来源文档的分块中检索包含其名称/别名的句子作为依据。"""
+        e = self.get_entity(entity_id)
+        if e is None:
+            return []
+        names = [e.canonical_name] + e.aliases
+        results: list[dict] = []
+        for doc_id in e.source_docs:
+            for chunk in self.list_chunks(doc_id):
+                text = chunk.text
+                hit_name = next((n for n in names if n and n.lower() in text.lower()), None)
+                if not hit_name:
+                    continue
+                idx = text.lower().find(hit_name.lower())
+                quote = _extract_sentence(text, idx)
+                results.append({"doc_id": doc_id, "document": self.doc_name(doc_id), "page": chunk.page, "quote": quote})
+                if len(results) >= limit:
+                    return results
+        return results
 
     def close(self) -> None:
         self._db.close()

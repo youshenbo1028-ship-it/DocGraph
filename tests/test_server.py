@@ -250,6 +250,26 @@ def test_extract_processes_pending_document(client):
     # 假抽取器会产出 GNN/Transformer => 至少 1 文档被处理
     assert resp.json()["documents"] == 1
 
+def test_entity_and_relation_detail_evidence(client):
+    """FR-307：实体/关系详情返回来源文档与原文依据。"""
+    pid, gid = _make_project_with_graph(client)
+    graph = client.get(f"/api/projects/{pid}/graph", params={"group_id": gid}).json()
+    node = graph["nodes"][0]
+    r = client.get(f"/api/projects/{pid}/entities/{node['data']['id']}")
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert d["canonical_name"]
+    assert d["source_docs"]  # 来源文档
+    # 实体证据（原文摘录，从分块检索）
+    assert "evidence" in d
+
+    edge = graph["edges"][0]
+    r2 = client.get(f"/api/projects/{pid}/relations/{edge['data']['id']}")
+    assert r2.status_code == 200, r2.text
+    rd = r2.json()
+    assert rd["source"] and rd["target"] and rd["type"]
+    assert rd["evidence"]  # 关系证据（原文摘录）
+
 def test_extract_requires_api_config(client):
     pid = client.post("/api/projects", json={"name": "t"}).json()["project"]["id"]
     r = client.post(
