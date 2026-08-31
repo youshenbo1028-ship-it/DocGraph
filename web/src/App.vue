@@ -13,20 +13,27 @@ const selectedGroupId = ref<string | null>(null);
 const fullGraph = ref<{ nodes: any[]; edges: any[] }>({ nodes: [], edges: [] });
 const selected = ref<any>(null);
 const loading = ref(false);
-const error = ref("");
-const notice = ref("");
 const hasKey = ref(false);
 const search = ref("");
 const typeFilter = ref<string>("");
 const canvasRef = ref<InstanceType<typeof GraphCanvas> | null>(null);
+const showSettings = ref(false);
+const showExport = ref(false);
+const newGroupName = ref("");
 
-const apiCfg = ref<ApiConfig>({
-  base_url: "https://api.deepseek.com/v1",
-  api_key: "",
-  model: "deepseek-chat",
-});
+const apiCfg = ref<ApiConfig>({ base_url: "https://api.deepseek.com/v1", api_key: "", model: "deepseek-chat" });
 
-// 客户端搜索 + 类型筛选（FR-506/507）
+// ---- Toast 通知 ----
+interface Toast { id: number; type: "info" | "success" | "error"; msg: string }
+const toasts = ref<Toast[]>([]);
+let toastId = 0;
+function toast(type: Toast["type"], msg: string) {
+  const id = ++toastId;
+  toasts.value.push({ id, type, msg });
+  setTimeout(() => { toasts.value = toasts.value.filter((t) => t.id !== id); }, type === "error" ? 6000 : 3200);
+}
+
+// ---- 筛选/统计 ----
 const graph = computed(() => {
   const kw = search.value.trim().toLowerCase();
   const nodes = fullGraph.value.nodes.filter((n) => {
@@ -39,61 +46,33 @@ const graph = computed(() => {
   const edges = fullGraph.value.edges.filter((e) => ids.has(e.data.source) && ids.has(e.data.target));
   return { nodes, edges };
 });
+const nodeTypes = computed(() => Array.from(new Set(fullGraph.value.nodes.map((n) => n.data.type || "未知"))));
 
-const nodeTypes = computed(() => {
-  const set = new Set<string>();
-  for (const n of fullGraph.value.nodes) set.add(n.data.type || "未知");
-  return Array.from(set);
-});
-
-async function call(fn: () => Promise<void>, okMsg: string) {
-  loading.value = true;
-  error.value = "";
-  notice.value = "";
-  try {
-    await fn();
-    if (okMsg) notice.value = okMsg;
-  } catch (e: any) {
-    error.value = String(e?.message ?? e);
-  } finally {
-    loading.value = false;
-  }
-}
-
+// ---- 业务 ----
 async function loadSettings() {
   try {
     const s = await api.getSettings();
     if (s.base_url) apiCfg.value.base_url = s.base_url;
     if (s.model) apiCfg.value.model = s.model;
     hasKey.value = !!s.has_key;
-  } catch {
-    /* 后端未启动时忽略 */
-  }
+  } catch { /* 后端未启动 */ }
 }
-
 async function ensureProject() {
-  if (pid.value) {
-    await loadProject();
-    return;
-  }
+  if (pid.value) { await loadProject(); return; }
   const p = await api.createProject("我的知识库");
   pid.value = p.project.id;
   localStorage.setItem(STORAGE_KEY, pid.value);
   await loadProject();
 }
-
 async function loadProject() {
   if (!pid.value) return;
   const p = await api.getProject(pid.value);
   project.value = p.project;
   groups.value = p.groups;
   documents.value = p.documents;
-  if (!selectedGroupId.value && groups.value.length) {
-    selectedGroupId.value = groups.value[0].id;
-  }
+  if (!selectedGroupId.value && groups.value.length) selectedGroupId.value = groups.value[0].id;
   await refreshGraph();
 }
-
 async function refreshGraph() {
   if (!pid.value) return;
   fullGraph.value = await api.getGraph(pid.value, selectedGroupId.value ?? undefined);
@@ -103,328 +82,319 @@ async function onFileChange(evt: Event) {
   const input = evt.target as HTMLInputElement;
   const file = input.files?.[0];
   if (!file || !pid.value) return;
-  await call(async () => {
+  loading.value = true;
+  try {
     await api.importDocument(pid.value!, file, selectedGroupId.value ?? undefined);
     await loadProject();
-  }, "文档已导入，点击「解析并抽取」生成图谱");
-  input.value = "";
+    toast("success", "文档已导入，点击「解析并抽取」生成图谱");
+  } catch (e: any) {
+    toast("error", String(e?.message ?? e));
+  } finally {
+    loading.value = false;
+    input.value = "";
+  }
 }
-
 async function onExtract() {
   if (!pid.value) return;
-  await call(async () => {
+  if (!hasKey.value && !apiCfg.value.api_key) {
+    toast("info", "请先在设置中填写 API Key");
+    showSettings.value = true;
+    return;
+  }
+  loading.value = true;
+  try {
     const summary = await api.extract(pid.value!, selectedGroupId.value, apiCfg.value);
     await loadProject();
-    notice.value =
-      "抽取完成：" + summary.documents + " 篇 / " + summary.entities + " 实体 / " +
-      summary.relations + " 关系" +
-      (summary.errors.length ? "（失败 " + summary.errors.length + " 篇：" + summary.errors.map((e: any) => e.document).join("、") + "）" : "");
-  }, "");
+    toast("success",
+      `完成：${summary.documents} 篇 / ${summary.entities} 实体 / ${summary.relations} 关系` +
+      (summary.errors.length ? `（失败 ${summary.errors.length} 篇）` : ""));
+  } catch (e: any) {
+    toast("error", String(e?.message ?? e));
+  } finally {
+    loading.value = false;
+  }
 }
-
 async function onSaveSettings() {
-  await call(async () => {
+  loading.value = true;
+  try {
     const s = await api.saveSettings(apiCfg.value);
     hasKey.value = !!s.has_key;
-    apiCfg.value.api_key = ""; // 保存后清空输入框（Key 已入凭据库）
-  }, "配置已保存" + (hasKey.value ? "，API Key 已安全存储" : ""));
+    toast("success", "配置已保存" + (s.has_key ? "，API Key 已安全存储" : ""));
+    apiCfg.value.api_key = "";
+    showSettings.value = false;
+  } catch (e: any) {
+    toast("error", String(e?.message ?? e));
+  } finally {
+    loading.value = false;
+  }
 }
-
-function selectGroup(id: string) {
-  selectedGroupId.value = id || null;
-  refreshGraph();
+async function onCreateGroup() {
+  if (!pid.value || !newGroupName.value.trim()) return;
+  try {
+    await api.createGroup(pid.value, newGroupName.value.trim());
+    newGroupName.value = "";
+    await loadProject();
+    toast("success", "分组已创建");
+  } catch (e: any) {
+    toast("error", String(e?.message ?? e));
+  }
 }
-
-function onSelect(data: any) {
-  selected.value = data;
-}
+function selectGroup(id: string) { selectedGroupId.value = id || null; refreshGraph(); }
+function onSelect(data: any) { selected.value = data; }
 
 function downloadDataUrl(url: string | null, filename: string) {
   if (!url) return;
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+}
+function onExport(kind: "png" | "svg" | "json" | "csv") {
+  showExport.value = false;
+  if (kind === "png") downloadDataUrl(canvasRef.value?.exportPng() ?? null, "graph.png");
+  else if (kind === "svg") {
+    const svg = canvasRef.value?.exportSvg(); if (!svg) return;
+    const u = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+    downloadDataUrl(u, "graph.svg"); URL.revokeObjectURL(u);
+  } else if (kind === "json" && pid.value) api.downloadExport(pid.value, "graph.json", selectedGroupId.value ?? undefined);
+  else if (kind === "csv" && pid.value) {
+    api.downloadExport(pid.value, "nodes.csv", selectedGroupId.value ?? undefined);
+    api.downloadExport(pid.value, "edges.csv", selectedGroupId.value ?? undefined);
+  }
 }
 
-function onExportPng() {
-  downloadDataUrl(canvasRef.value?.exportPng() ?? null, "graph.png");
-}
-function onExportSvg() {
-  const svg = canvasRef.value?.exportSvg();
-  if (!svg) return;
-  const blob = new Blob([svg], { type: "image/svg+xml" });
-  const url = URL.createObjectURL(blob);
-  downloadDataUrl(url, "graph.svg");
-  URL.revokeObjectURL(url);
-}
-function onExportJson() {
-  if (pid.value) api.downloadExport(pid.value, "graph.json", selectedGroupId.value ?? undefined);
-}
-function onExportCsv() {
-  if (!pid.value) return;
-  api.downloadExport(pid.value, "nodes.csv", selectedGroupId.value ?? undefined);
-  api.downloadExport(pid.value, "edges.csv", selectedGroupId.value ?? undefined);
-}
+const STATUS_LABEL: Record<string, string> = { pending: "待处理", parsing: "解析中", parsed: "已解析", extracting: "抽取中", extracted: "已抽取", failed: "失败" };
 
-onMounted(() => call(async () => {
-  await loadSettings();
-  await ensureProject();
-}, "项目已就绪"));
+const TYPE_COLORS: Record<string, string> = {
+  "概念/方法/理论": "#4d7cba", 人物: "#e0890c", "组织/机构": "#d64545", "论文/文献": "#2f9e63",
+  "数据集/工具": "#7a5bd6", 事件: "#c9a227", 指标: "#b35a8e",
+};
+function detailColor(type: string) { return TYPE_COLORS[type] ?? "#8a94a6"; }
+
+onMounted(async () => {
+  try { await loadSettings(); await ensureProject(); toast("success", "项目已就绪"); }
+  catch (e: any) { toast("error", String(e?.message ?? e)); }
+});
 </script>
 
 <template>
   <div class="app-shell">
+    <!-- 顶部工具栏 -->
     <header class="toolbar">
-      <strong>DocGraph</strong>
-      <span class="badge">M1 dev</span>
+      <div class="brand">
+        <span class="logo" />
+        <span class="name">DocGraph</span>
+        <span class="ver">MVP</span>
+      </div>
+      <div class="toolbar-actions">
+        <label class="btn primary">
+          <span class="icon">＋</span> 导入文档
+          <input type="file" accept=".pdf,.docx" hidden @change="onFileChange" :disabled="loading" />
+        </label>
+        <button class="btn accent" :disabled="loading" @click="onExtract">
+          <span class="icon" v-if="!loading">⚡</span>
+          <span class="spinner" v-else />
+          {{ loading ? "处理中…" : "解析并抽取" }}
+        </button>
+        <button class="btn ghost" :disabled="loading" @click="refreshGraph">刷新</button>
+        <div class="dropdown-wrap">
+          <button class="btn ghost" @click="showExport = !showExport">导出 ▾</button>
+          <div v-if="showExport" class="dropdown">
+            <button @click="onExport('png')">导出 PNG 图片</button>
+            <button @click="onExport('svg')">导出 SVG 矢量图</button>
+            <button @click="onExport('json')">导出图谱 JSON</button>
+            <button @click="onExport('csv')">导出 CSV（节点+边）</button>
+          </div>
+        </div>
+      </div>
       <span class="spacer" />
-      <input v-model="apiCfg.base_url" class="cfg" placeholder="base_url" title="OpenAI 兼容 API 地址" />
-      <input v-model="apiCfg.api_key" class="cfg" type="password" placeholder="api_key" title="LLM API Key" />
-      <input v-model="apiCfg.model" class="cfg" placeholder="model" title="模型名" />
-      <button class="btn" :disabled="loading" @click="onSaveSettings">保存配置</button>
-      <label class="btn">
-        导入文档
-        <input type="file" accept=".pdf,.docx" hidden @change="onFileChange" :disabled="loading" />
-      </label>
-      <button class="btn primary" :disabled="loading" @click="onExtract">解析并抽取</button>
-      <button class="btn" :disabled="loading" @click="refreshGraph">刷新</button>
-      <span class="sep" />
-      <span class="btn-group-label">导出</span>
-      <button class="btn" @click="onExportPng">PNG</button>
-      <button class="btn" @click="onExportSvg">SVG</button>
-      <button class="btn" @click="onExportJson">JSON</button>
-      <button class="btn" @click="onExportCsv">CSV</button>
+      <button class="icon-btn" title="设置 (API 配置)" @click="showSettings = !showSettings">⚙︎</button>
+
+      <!-- 设置弹层 -->
+      <div v-if="showSettings" class="settings-pop" @click.stop>
+        <div class="pop-title">LLM API 配置</div>
+        <label class="field">
+          <span>Base URL</span>
+          <input v-model="apiCfg.base_url" placeholder="https://api.deepseek.com/v1" />
+        </label>
+        <label class="field">
+          <span>API Key <em v-if="hasKey" class="ok">已保存</em></span>
+          <input v-model="apiCfg.api_key" type="password" placeholder="sk-..." />
+        </label>
+        <label class="field">
+          <span>模型</span>
+          <input v-model="apiCfg.model" placeholder="deepseek-chat" />
+        </label>
+        <div class="pop-actions">
+          <button class="btn accent sm" :disabled="loading" @click="onSaveSettings">保存配置</button>
+        </div>
+        <p class="pop-hint">支持任意 OpenAI 兼容接口（DeepSeek / OpenAI / 通义 / Kimi 等）。Key 存储于系统凭据库。</p>
+      </div>
     </header>
 
-    <div class="statusbar">
-      <span v-if="loading" class="loading">处理中…</span>
-      <span v-if="hasKey" class="notice">Key 已保存</span>
-      <span v-if="notice" class="notice">{{ notice }}</span>
-      <span v-if="error" class="error">{{ error }}</span>
-    </div>
-
+    <!-- 主区域 -->
     <main class="layout">
+      <!-- 左：分组 + 文档 -->
       <aside class="panel left">
-        <div class="panel-title">分组</div>
-        <button class="group-item" :class="{ active: !selectedGroupId }" @click="selectGroup('')">全部</button>
-        <button
-          v-for="g in groups"
-          :key="g.id"
-          class="group-item"
-          :class="{ active: selectedGroupId === g.id }"
-          @click="selectGroup(g.id)"
-        >{{ g.name }}</button>
-        <div class="panel-title">文档（{{ documents.length }}）</div>
+        <div class="sec-head">分组</div>
+        <button class="group-item" :class="{ active: !selectedGroupId }" @click="selectGroup('')">
+          <span class="gicon">🗂</span> 全部
+        </button>
+        <button v-for="g in groups" :key="g.id" class="group-item" :class="{ active: selectedGroupId === g.id }" @click="selectGroup(g.id)">
+          <span class="gicon">📁</span> {{ g.name }}
+        </button>
+        <div class="group-add">
+          <input v-model="newGroupName" placeholder="新建分组…" @keyup.enter="onCreateGroup" />
+          <button class="icon-btn sm" title="创建分组" @click="onCreateGroup">＋</button>
+        </div>
+
+        <div class="sec-head">文档 <span class="count">{{ documents.length }}</span></div>
+        <div v-if="!documents.length" class="empty-mini">还没有文档<br />点击「导入文档」开始</div>
         <div v-for="d in documents" :key="d.id" class="doc-item">
           <span class="doc-name" :title="d.file_name">{{ d.file_name }}</span>
-          <span class="doc-status" :class="'st-' + d.status">{{ d.status }}</span>
+          <span class="pill" :class="'pill-' + d.status">{{ STATUS_LABEL[d.status] ?? d.status }}</span>
         </div>
       </aside>
 
+      <!-- 中：图谱 -->
       <section class="canvas-wrap">
         <div class="canvas-toolbar">
           <input v-model="search" class="search" placeholder="搜索实体…" />
-          <button
-            v-for="t in nodeTypes"
-            :key="t"
-            class="chip"
-            :class="{ active: typeFilter === t }"
-            @click="typeFilter = typeFilter === t ? '' : t"
-          >{{ t }}</button>
-          <span class="count">{{ graph.nodes.length }} 节点 / {{ graph.edges.length }} 边</span>
+          <button v-for="t in nodeTypes" :key="t" class="chip" :class="{ active: typeFilter === t }" @click="typeFilter = typeFilter === t ? '' : t">{{ t }}</button>
+          <span class="stats">{{ graph.nodes.length }} 节点 · {{ graph.edges.length }} 关系</span>
         </div>
-        <GraphCanvas ref="canvasRef" :graph="graph" @select="onSelect" />
+        <div class="graph-area">
+          <GraphCanvas ref="canvasRef" :graph="graph" @select="onSelect" />
+          <div v-if="!graph.nodes.length" class="empty-graph">
+            <div class="empty-ico">🕸</div>
+            <div class="empty-title">图谱为空</div>
+            <div class="empty-sub">导入 PDF / Word 文档并点击「解析并抽取」，<br />实体与关系将在这里生成知识网络</div>
+          </div>
+        </div>
       </section>
 
+      <!-- 右：详情 -->
       <aside class="panel right">
-        <div class="panel-title">详情</div>
+        <div class="sec-head">详情</div>
         <template v-if="selected">
-          <h3>{{ selected.label }}</h3>
-          <p>类型：{{ selected.type }}</p>
-          <p>置信度：{{ selected.confidence ? selected.confidence.toFixed(2) : "-" }}</p>
+          <div class="detail-head">
+            <span class="dot" :style="{ background: detailColor(selected.type) }" />
+            <h3 class="detail-name">{{ selected.label }}</h3>
+          </div>
+          <div class="detail-row"><span class="k">类型</span><span class="v">{{ selected.type || "-" }}</span></div>
+          <div class="detail-row"><span class="k">置信度</span><span class="v">{{ selected.confidence ? selected.confidence.toFixed(2) : "-" }}</span></div>
+          <div class="detail-row"><span class="k">实体 ID</span><span class="v">{{ selected.id ? selected.id.slice(0, 10) + "…" : "-" }}</span></div>
+          <p class="detail-hint">点击节点查看其证据与关联实体</p>
         </template>
-        <p v-else class="hint">点击图谱中的节点查看详情</p>
+        <div v-else class="empty-mini">点击图谱中的节点<br />查看详情</div>
       </aside>
     </main>
+
+    <!-- Toast -->
+    <div class="toasts">
+      <div v-for="t in toasts" :key="t.id" class="toast" :class="'toast-' + t.type">{{ t.msg }}</div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.app-shell {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-bottom: 1px solid #ddd;
-  flex-wrap: wrap;
-}
-.badge {
-  font-size: 12px;
-  color: #888;
-}
-.spacer {
-  flex: 1;
-}
-.cfg {
-  width: 150px;
-  padding: 4px 8px;
-  font-size: 12px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-.btn {
-  padding: 5px 10px;
-  font-size: 12px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-  background: #fff;
-  cursor: pointer;
-}
-.btn.primary {
-  background: #4e79a7;
-  color: #fff;
-  border-color: #4e79a7;
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.sep {
-  width: 1px;
-  height: 20px;
-  background: #ddd;
-  margin: 0 4px;
-}
-.btn-group-label {
-  font-size: 12px;
-  color: #888;
-}
-.statusbar {
-  padding: 4px 12px;
-  font-size: 12px;
-  min-height: 20px;
-  border-bottom: 1px solid #eee;
-}
-.loading {
-  color: #4e79a7;
-}
-.notice {
-  color: #2e7d32;
-  margin-right: 8px;
-}
-.error {
-  color: #c62828;
-}
-.layout {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-}
-.panel {
-  width: 220px;
-  padding: 10px;
-  overflow-y: auto;
-  font-size: 13px;
-  background: #fafafa;
-}
-.left {
-  border-right: 1px solid #eee;
-}
-.right {
-  border-left: 1px solid #eee;
-}
-.panel-title {
-  font-weight: 600;
-  margin: 8px 0 4px;
-  color: #555;
-}
-.group-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  padding: 4px 8px;
-  margin-bottom: 2px;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  border-radius: 4px;
-}
-.group-item.active {
-  background: #e3edf7;
-  color: #1e5a8a;
-}
-.doc-item {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 4px 8px;
-  border-bottom: 1px dashed #eee;
-}
-.doc-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 130px;
-}
-.doc-status {
-  font-size: 11px;
-  color: #888;
-}
-.st-parsed {
-  color: #2e7d32;
-}
-.st-extracted {
-  color: #4e79a7;
-}
-.st-failed {
-  color: #c62828;
-}
-.canvas-wrap {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-.canvas-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-bottom: 1px solid #eee;
-  flex-wrap: wrap;
-}
-.search {
-  width: 180px;
-  padding: 4px 8px;
-  font-size: 12px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-.chip {
-  font-size: 11px;
-  padding: 2px 8px;
-  border: 1px solid #ccc;
-  border-radius: 10px;
-  background: #fff;
-  cursor: pointer;
-}
-.chip.active {
-  background: #4e79a7;
-  color: #fff;
-  border-color: #4e79a7;
-}
-.count {
-  margin-left: auto;
-  font-size: 12px;
-  color: #888;
-}
-.hint {
-  color: #999;
-}
+.app-shell { display: flex; flex-direction: column; height: 100%; position: relative; }
+
+/* 工具栏 */
+.toolbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border); position: relative; z-index: 20; }
+.brand { display: flex; align-items: center; gap: 8px; }
+.logo { width: 20px; height: 20px; border-radius: 6px; background: linear-gradient(135deg, #4d7cba, #63a6e0); box-shadow: var(--shadow); }
+.name { font-weight: 700; font-size: 16px; letter-spacing: .2px; }
+.ver { font-size: 11px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px; }
+.toolbar-actions { display: flex; align-items: center; gap: 8px; }
+.spacer { flex: 1; }
+
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; font-size: 13px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); cursor: pointer; transition: all .15s; }
+.btn:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+.btn .icon { font-size: 14px; }
+.btn.primary { background: var(--surface); }
+.btn.accent { background: var(--primary); border-color: var(--primary); color: #fff; }
+.btn.accent:hover { background: var(--primary-600); }
+.btn.ghost { background: transparent; }
+.btn.sm { padding: 5px 12px; font-size: 12px; }
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); cursor: pointer; font-size: 16px; }
+.icon-btn:hover { box-shadow: var(--shadow); }
+.icon-btn.sm { width: 26px; height: 26px; font-size: 14px; }
+.spinner { width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.5); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* 下拉 */
+.dropdown-wrap { position: relative; }
+.dropdown { position: absolute; right: 0; top: 110%; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 6px; min-width: 190px; z-index: 30; }
+.dropdown button { display: block; width: 100%; text-align: left; padding: 8px 10px; background: none; border: none; border-radius: var(--radius-sm); cursor: pointer; font-size: 13px; }
+.dropdown button:hover { background: var(--surface-2); }
+
+/* 设置弹层 */
+.settings-pop { position: absolute; right: 16px; top: 52px; width: 300px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 14px; z-index: 40; }
+.pop-title { font-weight: 600; margin-bottom: 10px; }
+.field { display: block; margin-bottom: 10px; }
+.field span { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 4px; }
+.field .ok { color: var(--success); font-style: normal; margin-left: 6px; }
+.field input { width: 100%; padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; outline: none; }
+.field input:focus { border-color: var(--primary); }
+.pop-actions { margin-top: 6px; }
+.pop-hint { font-size: 11px; color: var(--muted); margin: 10px 0 0; line-height: 1.5; }
+
+/* 主布局 */
+.layout { display: flex; flex: 1; min-height: 0; }
+.panel { width: 232px; padding: 14px 12px; overflow-y: auto; background: var(--surface); }
+.panel.left { border-right: 1px solid var(--border); }
+.panel.right { border-right: 1px solid var(--border); background: var(--surface-2); }
+.sec-head { font-size: 12px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .5px; margin: 12px 4px 8px; display: flex; align-items: center; justify-content: space-between; }
+.sec-head .count { background: var(--primary-100); color: var(--primary); border-radius: 10px; padding: 1px 8px; font-size: 11px; font-weight: 600; }
+.sec-head:first-child { margin-top: 2px; }
+
+.group-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 7px 10px; margin-bottom: 2px; border: none; background: transparent; cursor: pointer; border-radius: var(--radius-sm); font-size: 13px; color: var(--text-2); }
+.group-item:hover { background: var(--surface-2); }
+.group-item.active { background: var(--primary-100); color: var(--primary-600); font-weight: 600; }
+.gicon { font-size: 14px; }
+.group-add { display: flex; gap: 6px; margin: 6px 2px 0; }
+.group-add input { flex: 1; min-width: 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; outline: none; }
+.group-add input:focus { border-color: var(--primary); }
+
+.doc-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 8px; margin-bottom: 4px; border-radius: var(--radius-sm); background: var(--surface-2); }
+.doc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.pill { font-size: 10px; padding: 2px 7px; border-radius: 8px; white-space: nowrap; }
+.pill-pending { background: #eef0f4; color: var(--muted); }
+.pill-parsed { background: var(--success-100); color: var(--success); }
+.pill-extracting { background: #e9edfb; color: #4756b8; }
+.pill-extracted { background: var(--primary-100); color: var(--primary-600); }
+.pill-failed { background: var(--error-100); color: var(--error); }
+.empty-mini { color: var(--muted); font-size: 12px; text-align: center; padding: 22px 10px; line-height: 1.7; }
+
+/* 中间画布 */
+.canvas-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.canvas-toolbar { display: flex; align-items: center; gap: 6px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.search { width: 200px; padding: 7px 11px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; outline: none; }
+.search:focus { border-color: var(--primary); }
+.chip { font-size: 11px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); cursor: pointer; color: var(--text-2); }
+.chip:hover { border-color: var(--border-strong); }
+.chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.stats { margin-left: auto; font-size: 12px; color: var(--muted); }
+
+.graph-area { flex: 1; min-height: 0; position: relative; background: var(--surface); }
+.empty-graph { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: var(--muted); pointer-events: none; }
+.empty-ico { font-size: 44px; margin-bottom: 12px; opacity: .7; }
+.empty-title { font-size: 17px; font-weight: 600; color: var(--text-2); margin-bottom: 6px; }
+.empty-sub { font-size: 13px; line-height: 1.7; }
+
+/* 右侧详情 */
+.detail-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.dot { width: 12px; height: 12px; border-radius: 50%; }
+.detail-name { font-size: 16px; margin: 0; }
+.detail-row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px dashed var(--border); font-size: 13px; }
+.detail-row .k { color: var(--muted); }
+.detail-row .v { color: var(--text); max-width: 60%; text-align: right; word-break: break-all; }
+.detail-hint { color: var(--muted); font-size: 12px; margin-top: 14px; }
+
+/* Toast */
+.toasts { position: fixed; top: 16px; right: 16px; z-index: 100; display: flex; flex-direction: column; gap: 8px; max-width: 360px; }
+.toast { padding: 11px 14px; border-radius: var(--radius); box-shadow: var(--shadow-lg); font-size: 13px; color: #fff; opacity: .98; animation: slidein .2s ease; }
+.toast-success { background: var(--success); }
+.toast-error { background: var(--error); }
+.toast-info { background: var(--primary); }
+@keyframes slidein { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
 </style>
