@@ -228,7 +228,7 @@ def _project_detail(store: ProjectStore, pid: str) -> dict:
 # ---------- 路由 ----------
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="DocGraph", version="0.1.0")
+    app = FastAPI(title="DocGraph", version="0.2.0")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],  # 本地桌面应用（开发模式前端在 5173）

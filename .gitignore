@@ -11,6 +11,7 @@ web/test-results/
 venv/
 dist/
 build/
+release/
 *.spec
 
 # 测试与工具缓存
