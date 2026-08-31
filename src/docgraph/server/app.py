@@ -21,6 +21,17 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+# Windows 上 mimetypes 可能把 .js 误判为 text/plain，导致浏览器拒绝执行模块脚本（黑屏）。
+# 在静态资源挂载前注册正确的 MIME 类型。
+import mimetypes as _mime
+
+_mime.add_type("text/javascript", ".js")
+_mime.add_type("text/javascript", ".mjs")
+_mime.add_type("text/css", ".css")
+_mime.add_type("application/json", ".json")
+_mime.add_type("image/svg+xml", ".svg")
+_mime.add_type("font/woff2", ".woff2")
+
 from ..core.settings import get_api_config, save_api_config
 from ..core.store import DuplicateNameError, ProjectStore
 from ..parsers.base import ScannedPdfError
