@@ -12,6 +12,8 @@ import os
 import uuid
 from pathlib import Path
 
+import shutil
+import sqlite3
 import sys
 from datetime import datetime, timezone
 
@@ -32,15 +34,52 @@ _mime.add_type("application/json", ".json")
 _mime.add_type("image/svg+xml", ".svg")
 _mime.add_type("font/woff2", ".woff2")
 
-from ..core.settings import get_api_config, save_api_config
+from ..core.settings import (
+    get_api_config,
+    get_api_key,
+    get_last_project_id,
+    save_api_config,
+    set_last_project_id,
+    user_data_dir,
+)
 from ..core.store import DuplicateNameError, ProjectStore
 from ..parsers.base import ScannedPdfError
 from .extractor_factory import ApiConfig, make_extractor_factory
 from .pipeline import extract_group, parse_document
 
-# 项目数据目录（可用环境变量覆盖；生产打包时指向用户数据目录）
-DATA_DIR = Path(os.environ.get("DOCGRAPH_DATA_DIR", "data"))
-DATA_DIR.mkdir(exist_ok=True)
+# ---- 用户数据目录（稳定位置，不依赖启动目录） ----
+DATA_DIR = Path(os.environ.get("DOCGRAPH_DATA_DIR", str(user_data_dir() / "data")))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _migrate_legacy_data() -> None:
+    """把旧版本（启动目录相对 data/ 与 settings.json）迁移到稳定目录，避免用户数据丢失。"""
+    if any(DATA_DIR.iterdir()):
+        return  # 已迁移 / 稳定目录已有数据
+    src_projects = []
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    for cand in (repo_root / "data",):
+        if cand.is_dir():
+            src_projects.append(cand)
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).parent
+        if (exe_dir / "data").is_dir():
+            src_projects.append(exe_dir / "data")
+    for src in src_projects:
+        for proj in src.iterdir():
+            if proj.is_dir() and not (DATA_DIR / proj.name).exists():
+                shutil.copytree(proj, DATA_DIR / proj.name)
+    # settings.json
+    from ..core import settings
+
+    if not settings.settings_path().exists():
+        for sp in (repo_root / "settings.json",):
+            if sp.exists():
+                shutil.copy2(sp, settings.settings_path())
+                break
+
+
+_migrate_legacy_data()
 
 # MVP 支持格式（FR-102）
 SUPPORTED_FORMATS = {"pdf", "docx"}
@@ -112,6 +151,46 @@ def _dist_dir() -> Path | None:
     return p if p.exists() else None
 
 
+# ---------- 项目枚举 ----------
+
+def list_all_projects() -> list[dict]:
+    """扫描数据目录返回所有项目（含文档数），按创建时间倒序。"""
+    out = []
+    if not DATA_DIR.exists():
+        return out
+    for d in DATA_DIR.iterdir():
+        if d.is_dir() and (d / "project.db").exists():
+            try:
+                con = sqlite3.connect(f"file:{d / 'project.db'}?mode=ro", uri=True)
+                row = con.execute(
+                    "SELECT p.id, p.name, p.created_at, "
+                    "(SELECT COUNT(*) FROM documents x WHERE x.project_id=p.id) AS doc_count "
+                    "FROM projects p"
+                ).fetchone()
+                con.close()
+                if row:
+                    out.append({"id": row[0], "name": row[1], "created_at": row[2], "doc_count": row[3]})
+            except sqlite3.Error:
+                pass
+    out.sort(key=lambda p: p["created_at"], reverse=True)
+    return out
+
+
+def resolve_active_project() -> str | None:
+    """返回要激活的项目 id：优先 last_project_id，否则最近的、有文档的项目。"""
+    pid = get_last_project_id()
+    if pid and (DATA_DIR / pid).is_dir():
+        return pid
+    projs = list_all_projects()
+    if not projs:
+        return None
+    # 优先最近且有文档的项目（避免落到空项目）
+    for p in projs:
+        if p["doc_count"] > 0:
+            return p["id"]
+    return projs[0]["id"]
+
+
 # ---------- 载荷构建 ----------
 
 def _document_payload(d) -> dict:
@@ -163,8 +242,21 @@ def create_app() -> FastAPI:
 
     @app.get("/api/projects")
     def list_projects() -> list[dict]:
-        # 仅返回当前已打开的项目（M1 简化：项目列表持久化属后续）
-        return []
+        return list_all_projects()
+
+    @app.get("/api/projects/active")
+    def active_project() -> dict:
+        pid = resolve_active_project()
+        if pid is None:
+            return {"project": None, "groups": [], "documents": []}
+        set_last_project_id(pid)
+        return _project_detail(registry.open(pid), pid)
+
+    @app.post("/api/projects/{pid}/activate")
+    def activate_project(pid: str) -> dict:
+        store = registry.open(pid)  # 不存在则 404
+        set_last_project_id(pid)
+        return _project_detail(store, pid)
 
     @app.post("/api/projects")
     def create_project(req: ProjectCreate) -> dict:
@@ -238,7 +330,12 @@ def create_app() -> FastAPI:
     @app.post("/api/projects/{pid}/extract")
     def run_extract(pid: str, req: ExtractRequest) -> dict:
         store = registry.open(pid)
-        if not (req.api.base_url and req.api.api_key and req.api.model):
+        # 请求未携带的字段回退到已保存的设置（FR-801：Key 存凭据库）
+        saved = get_api_config()
+        base_url = req.api.base_url or saved.get("base_url", "")
+        model = req.api.model or saved.get("model", "")
+        api_key = req.api.api_key or get_api_key()
+        if not (base_url and api_key and model):
             raise HTTPException(
                 status_code=400,
                 detail="缺少 LLM API 配置（base_url / api_key / model），请在设置中配置（FR-801）",
@@ -252,7 +349,9 @@ def create_app() -> FastAPI:
         elif store.get_group(group_id) is None:
             raise HTTPException(status_code=404, detail="分组不存在")
 
-        factory = make_extractor_factory(store, req.api)
+        from .extractor_factory import ApiConfig
+
+        factory = make_extractor_factory(store, ApiConfig(base_url=base_url, api_key=api_key, model=model))
         return extract_group(store, pid, group_id, factory)
 
     @app.get("/api/projects/{pid}/graph")

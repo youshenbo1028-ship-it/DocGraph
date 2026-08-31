@@ -50,6 +50,11 @@ export const api = {
 
   getProject: (pid: string) => request("/api/projects/" + pid),
 
+  activeProject: () => request("/api/projects/active"),
+
+  activateProject: (pid: string) =>
+    request("/api/projects/" + pid + "/activate", { method: "POST" }),
+
   createGroup: (pid: string, name: string) =>
     request("/api/projects/" + pid + "/groups", json("POST", { name })),
 

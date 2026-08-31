@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from ..core.models import DOC_STATUS_EXTRACTED, DOC_STATUS_EXTRACTING, DOC_STATUS_FAILED, DOC_STATUS_PARSED, Document
+from ..core.models import DOC_STATUS_EXTRACTED, DOC_STATUS_EXTRACTING, DOC_STATUS_FAILED, DOC_STATUS_PARSED, DOC_STATUS_PARSING, Document
 from ..core.store import ProjectStore
 from ..graph.dedupe import merge_entities
 from ..parsers import get_parser
@@ -34,10 +34,11 @@ def extract_group(
 ) -> dict:
     """对分组内已解析文档执行抽取（FR-305 / FR-310 / FR-311）。"""
     extractor = extractor_factory(group_id=group_id)
+    # 处理所有未在进行的文档（含待解析的 pending），避免跳过用户刚导入的文件
     docs = [
         d
         for d in store.list_documents(project_id, group_id)
-        if d.status in (DOC_STATUS_PARSED, DOC_STATUS_EXTRACTED, DOC_STATUS_FAILED)
+        if d.status not in (DOC_STATUS_PARSING, DOC_STATUS_EXTRACTING)
     ]
     summary: dict = {"documents": 0, "chunks": 0, "entities": 0, "relations": 0, "pending": 0, "errors": []}
 

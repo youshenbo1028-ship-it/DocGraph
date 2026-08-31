@@ -182,6 +182,74 @@ def test_export_graph_json(client):
     assert body["stats"]["nodes"] >= 2
     assert body["stats"]["edges"] >= 1
 
+def test_active_project_with_no_projects(client):
+    """无项目时 active 返回空（前端据此新建）。"""
+    r = client.get("/api/projects/active")
+    assert r.status_code == 200
+    assert r.json()["project"] is None
+
+
+def test_activate_and_active_roundtrip(client):
+    """激活项目 -> last_project_id 持久化 -> active 恢复。"""
+    pid = client.post("/api/projects", json={"name": "t"}).json()["project"]["id"]
+    r = client.post(f"/api/projects/{pid}/activate")
+    assert r.status_code == 200
+    assert r.json()["project"]["id"] == pid
+    r2 = client.get("/api/projects/active")
+    assert r2.json()["project"]["id"] == pid
+    from docgraph.core import settings
+    assert settings.get_last_project_id() == pid
+
+
+def test_list_projects_includes_doc_count(client):
+    pid = client.post("/api/projects", json={"name": "t"}).json()["project"]["id"]
+    gid = client.post(f"/api/projects/{pid}/groups", json={"name": "g"}).json()["id"]
+    client.post(
+        f"/api/projects/{pid}/documents",
+        files={"file": ("p.docx", _make_docx_bytes(), DOCX_MIME)},
+        data={"group_id": gid},
+    )
+    projs = client.get("/api/projects").json()
+    item = next(p for p in projs if p["id"] == pid)
+    assert item["doc_count"] >= 1
+
+
+def test_extract_uses_stored_key_when_request_empty(client):
+    """请求里 api_key 为空 -> 后端读取已存 Key，不再返回 400（问题2 修复）。"""
+    from docgraph.core import settings as settings_mod
+    client.app  # noqa
+    pid = client.post("/api/projects", json={"name": "t"}).json()["project"]["id"]
+    gid = client.post(f"/api/projects/{pid}/groups", json={"name": "g"}).json()["id"]
+    # 保存 key（强制文件回退，避免污染系统凭据库）
+    settings_mod.keyring = None
+    client.post("/api/settings", json={"base_url": "http://x", "api_key": "sk-test", "model": "m"})
+    # api_key 为空 -> 后端应从 settings 读 key
+    r = client.post(
+        f"/api/projects/{pid}/extract",
+        json={"group_id": gid, "api": {"base_url": "http://x", "api_key": "", "model": "m"}},
+    )
+    assert r.status_code == 200  # 而非 400" +
+
+def test_extract_processes_pending_document(client):
+    """待处理（pending）文档也应参与抽取（避免刚导入即被跳过）。"""
+    pid = client.post("/api/projects", json={"name": "t"}).json()["project"]["id"]
+    gid = client.post(f"/api/projects/{pid}/groups", json={"name": "g"}).json()["id"]
+    r = client.post(
+        f"/api/projects/{pid}/documents",
+        files={"file": ("p.docx", _make_docx_bytes(), DOCX_MIME)},
+        data={"group_id": gid},
+    )
+    assert r.status_code == 200
+    assert r.json()["status"] == "pending"
+    # 直接抽取（不先 parse）—— 流程应自动解析并抽取出实体
+    resp = client.post(
+        f"/api/projects/{pid}/extract",
+        json={"group_id": gid, "api": {"base_url": "http://x", "api_key": "k", "model": "m"}},
+    )
+    assert resp.status_code == 200
+    # 假抽取器会产出 GNN/Transformer => 至少 1 文档被处理
+    assert resp.json()["documents"] == 1
+
 def test_extract_requires_api_config(client):
     pid = client.post("/api/projects", json={"name": "t"}).json()["project"]["id"]
     r = client.post(

@@ -58,10 +58,20 @@ async function loadSettings() {
   } catch { /* 后端未启动 */ }
 }
 async function ensureProject() {
-  if (pid.value) { await loadProject(); return; }
+  // 优先恢复上一次/最近的项目（持久化在服务端，重启不丢）
+  try {
+    const active = await api.activeProject();
+    if (active.project) {
+      pid.value = active.project.id;
+      localStorage.setItem(STORAGE_KEY, pid.value);
+      await loadProject();
+      return;
+    }
+  } catch { /* 后端未就绪时继续走新建 */ }
   const p = await api.createProject("我的知识库");
   pid.value = p.project.id;
   localStorage.setItem(STORAGE_KEY, pid.value);
+  try { await api.activateProject(pid.value); } catch { /* 忽略 */ }
   await loadProject();
 }
 async function loadProject() {
