@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "cytoscape": "^3.30.0",
+    "cytoscape-svg": "^0.2.0",
     "vue": "^3.4.0"
   },
   "devDependencies": {

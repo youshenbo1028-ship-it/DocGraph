@@ -40,6 +40,17 @@ python -m app.main
 
 > 打包单文件 exe：见 [scripts/](scripts/README.md)。
 
+## 下载与使用（Windows exe）
+
+1. 从 [Releases](../../releases) 下载 `DocGraph.exe`（附 SHA256 校验值）；
+2. 双击运行——首次运行若遇 SmartScreen 提示，点「更多信息 -> 仍要运行」（未签名程序属正常提示）；
+3. 顶部填入 LLM API 配置（base_url / api_key / model，支持 DeepSeek、OpenAI、通义等 OpenAI 兼容接口），点「保存配置」（Key 存系统凭据库）；
+4. 点「导入文档」选择 PDF 或 Word 文档，再点「解析并抽取」生成知识图谱；
+5. 支持搜索、类型筛选、分组切换，可导出 PNG / SVG / JSON / CSV。
+
+> 数据全部保存在本地（项目目录 + 系统凭据库），仅抽取时调用你配置的 LLM API。
+> 命令行构建：`powershell -ExecutionPolicy Bypass -File scripts/build_exe.ps1`
+
 ## 目录结构
 
 ```

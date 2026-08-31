@@ -31,6 +31,18 @@ function json(method: string, body: unknown): RequestInit {
   };
 }
 
+async function downloadFromApi(path: string, filename: string) {
+  const resp = await fetch(BASE + path);
+  if (!resp.ok) throw new Error("下载失败：" + resp.status);
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
   health: () => request("/api/health"),
 
@@ -61,5 +73,20 @@ export const api = {
     request(
       "/api/projects/" + pid + "/graph" +
         (groupId ? "?group_id=" + encodeURIComponent(groupId) : ""),
+    ),
+
+  getSettings: () => request("/api/settings"),
+
+  saveSettings: (cfg: ApiConfig) =>
+    request(
+      "/api/settings",
+      json("POST", { base_url: cfg.base_url, api_key: cfg.api_key, model: cfg.model }),
+    ),
+
+  downloadExport: (pid: string, kind: "nodes.csv" | "edges.csv" | "graph.json", groupId?: string) =>
+    downloadFromApi(
+      "/api/projects/" + pid + "/export/" + kind +
+        (groupId ? "?group_id=" + encodeURIComponent(groupId) : ""),
+      kind,
     ),
 };

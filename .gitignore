@@ -25,6 +25,7 @@ web/.vite/
 *.db
 *.sqlite3
 data/
+settings.json
 *.key
 .env
 

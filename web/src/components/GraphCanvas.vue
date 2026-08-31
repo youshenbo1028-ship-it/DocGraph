@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import cytoscape from "cytoscape";
+import cytoscapeSvg from "cytoscape-svg";
+
+cytoscape.use(cytoscapeSvg as any);
 
 const props = defineProps<{ graph: { nodes: any[]; edges: any[] } }>();
 const emit = defineEmits<{ (e: "select", data: any): void }>();
@@ -67,7 +70,11 @@ onMounted(() => {
   render();
 });
 
-watch(() => props.graph, () => render(), { deep: true });
+watch(
+  () => props.graph,
+  () => render(),
+  { deep: true },
+);
 
 function render() {
   if (!cy) return;
@@ -76,6 +83,16 @@ function render() {
   cy.add(props.graph.edges as any);
   cy.layout({ name: "cose", animate: false, nodeRepulsion: 8000, idealEdgeLength: 120 }).run();
 }
+
+// 导出（FR-601）
+function exportPng(): string | null {
+  return cy ? cy.png({ full: true, scale: 2 }) : null; // data URL
+}
+function exportSvg(): string | null {
+  return cy ? (cy as any).svg({ full: true, scale: 1 }) : null;
+}
+
+defineExpose({ exportPng, exportSvg });
 
 onBeforeUnmount(() => {
   cy?.destroy();

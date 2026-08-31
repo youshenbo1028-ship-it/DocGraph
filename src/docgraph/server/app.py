@@ -12,10 +12,16 @@ import os
 import uuid
 from pathlib import Path
 
+import sys
+from datetime import datetime, timezone
+
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from ..core.settings import get_api_config, save_api_config
 from ..core.store import DuplicateNameError, ProjectStore
 from ..parsers.base import ScannedPdfError
 from .extractor_factory import ApiConfig, make_extractor_factory
@@ -68,6 +74,31 @@ class GroupCreate(BaseModel):
 class ExtractRequest(BaseModel):
     group_id: str | None = None
     api: ApiConfig = ApiConfig(base_url="", api_key="", model="")
+
+
+class SettingsUpdate(BaseModel):
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+
+
+# ---------- 工具 ----------
+
+def _csv_escape(value: object) -> str:
+    """CSV 字段转义（含逗号/引号/换行时加引号）。"""
+    s = "" if value is None else str(value)
+    if any(ch in s for ch in (",", '"', "\n", "\r")):
+        return '"' + s.replace('"', '""') + '"'
+    return s
+
+
+def _dist_dir() -> Path | None:
+    """打包模式：内嵌 web/dist（PyInstaller sys._MEIPASS）；开发模式：仓库 web/dist。"""
+    if getattr(sys, "_MEIPASS", None):
+        p = Path(sys._MEIPASS) / "web" / "dist"
+        return p if p.exists() else None
+    p = Path(__file__).resolve().parent.parent.parent.parent / "web" / "dist"
+    return p if p.exists() else None
 
 
 # ---------- 载荷构建 ----------
@@ -217,6 +248,71 @@ def create_app() -> FastAPI:
     def get_graph(pid: str, group_id: str | None = None) -> dict:
         store = registry.open(pid)
         return store.get_graph(pid, group_id)
+
+    # ---------- 设置（FR-801 / FR-802） ----------
+
+    @app.get("/api/settings")
+    def read_settings() -> dict:
+        return get_api_config()
+
+    @app.post("/api/settings")
+    def update_settings(req: SettingsUpdate) -> dict:
+        save_api_config(req.base_url, req.model, req.api_key or None)
+        return get_api_config()
+
+    # ---------- 导出（FR-602） ----------
+
+    @app.get("/api/projects/{pid}/export/nodes.csv")
+    def export_nodes_csv(pid: str, group_id: str | None = None) -> Response:
+        store = registry.open(pid)
+        g = store.get_graph(pid, group_id)
+        rows = [["id", "label", "type", "confidence"]]
+        rows += [
+            [n["data"]["id"], n["data"]["label"], n["data"]["type"], n["data"]["confidence"]]
+            for n in g["nodes"]
+        ]
+        text = "\n".join(",".join(_csv_escape(c) for c in row) for row in rows)
+        return Response(
+            text,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="nodes.csv"'},
+        )
+
+    @app.get("/api/projects/{pid}/export/edges.csv")
+    def export_edges_csv(pid: str, group_id: str | None = None) -> Response:
+        store = registry.open(pid)
+        g = store.get_graph(pid, group_id)
+        rows = [["source", "target", "type", "confidence", "evidence"]]
+        rows += [
+            [e["data"]["source"], e["data"]["target"], e["data"]["type"], e["data"]["confidence"], ""]
+            for e in g["edges"]
+        ]
+        text = "\n".join(",".join(_csv_escape(c) for c in row) for row in rows)
+        return Response(
+            text,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="edges.csv"'},
+        )
+
+    @app.get("/api/projects/{pid}/export/graph.json")
+    def export_graph_json(pid: str, group_id: str | None = None) -> dict:
+        store = registry.open(pid)
+        g = store.get_graph(pid, group_id)
+        return {
+            "schema": "docgraph-graph/v1",
+            "project_id": pid,
+            "group_id": group_id,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "stats": {"nodes": len(g["nodes"]), "edges": len(g["edges"])},
+            "nodes": g["nodes"],
+            "edges": g["edges"],
+        }
+
+    # ---------- 打包模式：内嵌前端静态资源 ----------
+
+    dist = _dist_dir()
+    if dist is not None:
+        app.mount("/", StaticFiles(directory=str(dist), html=True), name="web")
 
     return app
 

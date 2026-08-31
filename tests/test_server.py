@@ -41,6 +41,7 @@ class FakeExtractor:
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setattr(app_mod, "DATA_DIR", tmp_path / "data")
+    monkeypatch.setenv("DOCGRAPH_SETTINGS_PATH", str(tmp_path / "settings.json"))
     app_mod.registry.clear()
     monkeypatch.setattr(
         app_mod,
@@ -123,6 +124,63 @@ def test_unsupported_format(client):
     r = client.post(f"/api/projects/{pid}/documents", files={"file": ("a.txt", b"hello", "text/plain")})
     assert r.status_code == 400  # FR-102：MVP 仅 PDF/DOCX
 
+
+def test_settings_endpoints(client):
+    """FR-801/802：保存并读取 API 配置（不返回 Key 明文）。"""
+    r = client.post(
+        "/api/settings",
+        json={"base_url": "https://api.example.com/v1", "api_key": "sk-secret-1", "model": "m1"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["base_url"] == "https://api.example.com/v1"
+    assert body["has_key"] is True
+    assert "sk-secret-1" not in str(body)  # 不返回 Key 明文
+
+    r2 = client.get("/api/settings")
+    assert r2.json()["base_url"] == "https://api.example.com/v1"
+
+
+def _make_project_with_graph(client) -> tuple[str, str]:
+    pid = client.post("/api/projects", json={"name": "导出测试"}).json()["project"]["id"]
+    gid = client.post(f"/api/projects/{pid}/groups", json={"name": "g"}).json()["id"]
+    r = client.post(
+        f"/api/projects/{pid}/documents",
+        files={"file": ("p.docx", _make_docx_bytes(), DOCX_MIME)},
+        data={"group_id": gid},
+    )
+    doc_id = r.json()["id"]
+    client.post(f"/api/projects/{pid}/documents/{doc_id}/parse")
+    client.post(
+        f"/api/projects/{pid}/extract",
+        json={"group_id": gid, "api": {"base_url": "http://x", "api_key": "k", "model": "m"}},
+    )
+    return pid, gid
+
+
+def test_export_nodes_and_edges_csv(client):
+    """FR-602：CSV 导出（可导入 Gephi）。"""
+    pid, gid = _make_project_with_graph(client)
+    r = client.get(f"/api/projects/{pid}/export/nodes.csv", params={"group_id": gid})
+    assert r.status_code == 200
+    assert "text/csv" in r.headers["content-type"]
+    assert "GNN" in r.text
+    assert r.text.splitlines()[0] == "id,label,type,confidence"
+
+    r2 = client.get(f"/api/projects/{pid}/export/edges.csv", params={"group_id": gid})
+    assert r2.status_code == 200
+    assert "source,target,type,confidence,evidence" in r2.text.splitlines()[0]
+
+
+def test_export_graph_json(client):
+    """FR-602：Graph JSON 自描述导出。"""
+    pid, gid = _make_project_with_graph(client)
+    r = client.get(f"/api/projects/{pid}/export/graph.json", params={"group_id": gid})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["schema"] == "docgraph-graph/v1"
+    assert body["stats"]["nodes"] >= 2
+    assert body["stats"]["edges"] >= 1
 
 def test_extract_requires_api_config(client):
     pid = client.post("/api/projects", json={"name": "t"}).json()["project"]["id"]

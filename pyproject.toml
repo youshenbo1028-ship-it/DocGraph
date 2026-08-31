@@ -39,6 +39,7 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.4",
     "reportlab>=4.0",  # 测试用：生成样例 PDF
+    "pyinstaller>=6.0",  # 打包单文件 exe
 ]
 
 [project.scripts]
