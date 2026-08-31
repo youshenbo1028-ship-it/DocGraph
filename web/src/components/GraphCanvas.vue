@@ -76,14 +76,7 @@ onMounted(() => {
     ],
     layout: { name: "cose", animate: false },
   });
-  cy.on("tap", "node", (evt) => {
-    // 高亮邻居，淡化其余（FR-504）
-    const node = evt.target;
-    const neighbor = node.closedNeighborhood();
-    cy.elements().removeClass("faded");
-    cy.elements().not(neighbor).addClass("faded");
-    emit("select", { kind: "node", data: node.data() });
-  });
+  cy.on("tap", "node", (evt) => _select(evt.target));
   cy.on("tap", "edge", (evt) => {
     cy.elements().removeClass("faded");
     emit("select", { kind: "edge", data: evt.target.data() });
@@ -107,13 +100,26 @@ function render() {
   cy.layout({ name: "cose", animate: false, nodeRepulsion: 9000, idealEdgeLength: 130, padding: 40 }).run();
 }
 
+function _select(node: any) {
+  const neighbor = node.closedNeighborhood();
+  cy?.elements().removeClass("faded");
+  cy?.elements().not(neighbor).addClass("faded");
+  emit("select", { kind: "node", data: node.data() });
+}
+
+// 测试钩子：供自动化触发首个节点选择（原节点 tap 逻辑复用）
+function selectFirstNode() {
+  const first = cy?.nodes().first();
+  if (first && first.length) _select(first);
+}
+
 function exportPng(): string | null {
   return cy ? cy.png({ full: true, scale: 2 }) : null;
 }
 function exportSvg(): string | null {
   return cy ? (cy as any).svg({ full: true, scale: 1 }) : null;
 }
-defineExpose({ exportPng, exportSvg });
+defineExpose({ exportPng, exportSvg, selectFirstNode });
 
 onBeforeUnmount(() => { cy?.destroy(); cy = null; });
 </script>

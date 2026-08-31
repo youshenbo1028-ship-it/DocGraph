@@ -206,6 +206,10 @@ function detailColor(type: string) { return TYPE_COLORS[type] ?? "#8a94a6"; }
 onMounted(async () => {
   try { await loadSettings(); await ensureProject(); toast("success", "项目已就绪"); }
   catch (e: any) { toast("error", String(e?.message ?? e)); }
+  // 自测钩子（仅测试使用，正常使用无副作用）
+  if (new URLSearchParams(window.location.search).get("seltest") === "1") {
+    (window as any).__docgraph_select_first = () => (canvasRef.value as any)?.selectFirstNode?.();
+  }
 });
 </script>
 
