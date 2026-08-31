@@ -9,5 +9,16 @@ from .models import (
     Project,
     Relation,
 )
+from .store import DuplicateNameError, ProjectStore
 
-__all__ = ["Chunk", "Document", "Entity", "Evidence", "Group", "Project", "Relation"]
+__all__ = [
+    "Chunk",
+    "Document",
+    "DuplicateNameError",
+    "Entity",
+    "Evidence",
+    "Group",
+    "Project",
+    "ProjectStore",
+    "Relation",
+]
