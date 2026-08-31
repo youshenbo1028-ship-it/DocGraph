@@ -3,8 +3,9 @@
 ## 开发模式
 
 ```bash
-# 1) 后端依赖
-pip install -e ".[dev]"
+# 1) 后端依赖（uv + 清华镜像，配置见 .uv.toml）
+uv venv --python 3.10
+uv pip install -e ".[dev]"
 
 # 2) 前端
 cd web && npm install && npm run dev

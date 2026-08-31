@@ -1,0 +1,4 @@
+# 项目级 uv 配置：使用清华 PyPI 镜像加速依赖下载
+# 如需切换官方源，删除本文件或在命令行加 --default-index https://pypi.org/simple
+
+default-index = "https://pypi.tuna.tsinghua.edu.cn/simple"

@@ -23,10 +23,10 @@ DocGraph 将用户拖入的本地文档（论文 / 报告 / 笔记）自动解�
 ## 快速开始（开发模式）
 
 ```bash
-# 后端
-python -m venv .venv
+# 后端（uv 虚拟环境；清华镜像配置见 .uv.toml）
+uv venv --python 3.10
 .venv\Scripts\activate
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"
 
 # 前端
 cd web
@@ -61,6 +61,7 @@ DocGraph/
 +-- LICENSE                 # MIT（宽松许可，公开可商用）
 +-- CONTRIBUTING.md
 +-- pyproject.toml
++-- .uv.toml                  # uv 配置（清华 PyPI 镜像）
 ```
 
 ## 路线图
