@@ -1,5 +1,6 @@
 """DocGraph 桌面入口：内置 API 服务 + pywebview 装配。
 
+- 无边框窗口（frameless）：去掉系统标题栏，顶部由前端自绘标题栏（拖拽移动 + 窗口控制按钮）；
 - 开发模式：前端由 Vite（5173）提供，后端在 8765；
 - 打包模式：web/dist 由后端静态挂载，pywebview 直接打开 http://127.0.0.1:8765/。
 """
@@ -7,6 +8,8 @@
 from __future__ import annotations
 
 import threading
+
+import webview
 
 API_HOST = "127.0.0.1"
 API_PORT = 8765
@@ -29,17 +32,37 @@ def _frontend_url() -> str:
     return FRONTEND_DEV_URL
 
 
+class WindowApi:
+    """暴露给前端的窗口控制接口（前端 window.pywebview.api.*）。
+
+    pywebview 会把当前 window 注入到 api 实例的 self.window 属性。
+    """
+
+    def minimize(self) -> None:
+        self.window.minimize()
+
+    def toggle_maximize(self) -> None:
+        if self.window.maximized:
+            self.window.restore()
+        else:
+            self.window.maximize()
+
+    def close(self) -> None:
+        self.window.destroy()
+
+
 def main() -> None:
     threading.Thread(target=_start_server, daemon=True).start()
 
-    import webview
-
+    # js_api 传给 create_window；frameless 去掉系统标题栏，由前端自绘
     webview.create_window(
         "DocGraph",
         url=_frontend_url(),
         width=1440,
         height=900,
-        min_size=(1024, 700),
+        min_size=(1080, 700),
+        frameless=True,
+        js_api=WindowApi(),
     )
     webview.start()
 

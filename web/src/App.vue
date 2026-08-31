@@ -162,6 +162,12 @@ function onExport(kind: "png" | "svg" | "json" | "csv") {
 
 const STATUS_LABEL: Record<string, string> = { pending: "待处理", parsing: "解析中", parsed: "已解析", extracting: "抽取中", extracted: "已抽取", failed: "失败" };
 
+// 窗口控制（打包模式经 window.pywebview.api 调用；浏览器开发模式优雅降级）
+const pyweb = () => (window as any).pywebview?.api;
+function winMin() { pyweb()?.minimize(); }
+function winMax() { pyweb()?.toggle_maximize(); }
+function winClose() { pyweb()?.close(); }
+
 const TYPE_COLORS: Record<string, string> = {
   "概念/方法/理论": "#4d7cba", 人物: "#e0890c", "组织/机构": "#d64545", "论文/文献": "#2f9e63",
   "数据集/工具": "#7a5bd6", 事件: "#c9a227", 指标: "#b35a8e",
@@ -206,6 +212,11 @@ onMounted(async () => {
       </div>
       <span class="spacer" />
       <button class="icon-btn" title="设置 (API 配置)" @click="showSettings = !showSettings">⚙︎</button>
+      <div class="win-controls">
+        <button class="win-btn" title="最小化" @click="winMin">─</button>
+        <button class="win-btn" title="最大化 / 还原" @click="winMax">▢</button>
+        <button class="win-btn close" title="关闭" @click="winClose">✕</button>
+      </div>
 
       <!-- 设置弹层 -->
       <div v-if="showSettings" class="settings-pop" @click.stop>
@@ -296,6 +307,14 @@ onMounted(async () => {
 
 <style scoped>
 .app-shell { display: flex; flex-direction: column; height: 100%; position: relative; }
+
+/* 无边框窗口：顶部工具栏作为拖拽区，交互元素设为 no-drag */
+.toolbar { -webkit-app-region: drag; }
+.toolbar .btn, .toolbar .icon-btn, .toolbar input, .toolbar .dropdown-wrap, .toolbar .win-btn, .toolbar .settings-pop { -webkit-app-region: no-drag; }
+.win-controls { display: flex; align-items: center; gap: 2px; margin-left: 6px; }
+.win-btn { display: flex; align-items: center; justify-content: center; width: 34px; height: 30px; border: none; background: transparent; cursor: pointer; font-size: 13px; color: var(--text-2); border-radius: 6px; }
+.win-btn:hover { background: var(--surface-2); }
+.win-btn.close:hover { background: #e81123; color: #fff; }
 
 /* 工具栏 */
 .toolbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border); position: relative; z-index: 20; }
