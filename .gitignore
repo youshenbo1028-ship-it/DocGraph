@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+*.spec
+
+# 测试与工具缓存
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 前端
+node_modules/
+web/dist/
+web/.vite/
+
+# 本地数据 / 密钥
+*.db
+*.sqlite3
+data/
+*.key
+.env
+
+# IDE
+.idea/
+.vscode/

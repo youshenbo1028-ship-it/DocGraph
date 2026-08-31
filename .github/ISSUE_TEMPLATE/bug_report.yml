@@ -1,0 +1,32 @@
+name: Bug 报告
+description: 提交一个缺陷
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: exe 或 pip 版本号
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 描述如何复现该问题
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为
+  - type: input
+    id: prd
+    attributes:
+      label: 相关 PRD 需求编号（可选）
+      description: 例如 FR-201
