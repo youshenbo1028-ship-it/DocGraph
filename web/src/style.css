@@ -26,6 +26,9 @@
 
 * { box-sizing: border-box; }
 html, body, #app { margin: 0; height: 100%; }
+/* 无边框窗口：默认整面 no-drag，仅在顶部工具栏显式 drag，避免拖动内容区拖走整个窗口 */
+html, body, #app { -webkit-app-region: no-drag; }
+canvas, .graph-canvas, .graph-wrap, .canvas-wrap { -webkit-app-region: no-drag; }
 body {
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, "Microsoft YaHei", sans-serif;
   font-size: 14px;
