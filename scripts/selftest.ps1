@@ -86,4 +86,9 @@ try {
 if ($code -ne 0) { Write-Host "FAIL: Playwright UI" -ForegroundColor Red; exit 1 }
 Write-Host "PASS: Playwright UI" -ForegroundColor Green
 
+Step "6/6 安全检查（API Key 未打包进产物）"
+& .\.venv\Scripts\python.exe scripts\verify_no_key.py
+if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: 密钥安全检查——请勿将真实/占位 Key 打包进 exe 或提交入库" -ForegroundColor Red; exit 1 }
+Write-Host "PASS: 密钥安全检查" -ForegroundColor Green
+
 Write-Host ""; Write-Host "========== SELFTEST ALL PASS ==========" -ForegroundColor Green
