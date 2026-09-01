@@ -7,9 +7,14 @@
 
 from __future__ import annotations
 
+import ctypes
 import threading
 
 import webview
+
+# Win32 常量：让 Windows 发起原生窗口拖动（frameless 自定义拖拽区）
+_WM_NCLBUTTONDOWN = 0x00A1
+_HTCAPTION = 2
 
 API_HOST = "127.0.0.1"
 API_PORT = 8765
@@ -58,6 +63,23 @@ class WindowApi:
     def close(self) -> None:
         if _window is not None:
             _window.destroy()
+
+    def start_drag(self) -> None:
+        """发起原生窗口拖动（工具栏自定义拖拽区，Windows frameless 用）。
+
+        说明: pywebview 在 Windows(winforms+edgechromium) 未实现 easy_drag 与
+        -webkit-app-region 拖拽区，因此用 Win32 ReleaseCapture + SendMessage(HTCAPTION)
+        让系统接管鼠标拖动窗口。画布/节点走正常鼠标事件，不受影响。
+        """
+        if _window is None:
+            return
+        try:
+            hwnd = int(_window.native.Handle.ToInt32())
+        except (AttributeError, TypeError, ValueError):
+            return
+        user32 = ctypes.windll.user32
+        user32.ReleaseCapture()
+        user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, _HTCAPTION, 0)
 
 
 def main() -> None:

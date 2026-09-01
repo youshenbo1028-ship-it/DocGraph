@@ -238,6 +238,13 @@ function winMin() { pyweb()?.minimize(); }
 function winMax() { pyweb()?.toggle_maximize(); }
 function winClose() { pyweb()?.close(); }
 
+// 工具栏自定义窗口拖拽（Windows frameless：pywebview 不实现 app-region 拖拽区）
+function onToolbarMousedown(e: MouseEvent) {
+  const t = e.target as HTMLElement;
+  if (t.closest("button, input, label, select, .dropdown-wrap, .settings-pop, .win-btn, .icon-btn")) return;
+  if (e.button === 0) pyweb()?.start_drag();
+}
+
 // ---- 模型 API 调用日志 ----
 const showTraces = ref(false);
 const traces = ref<any[]>([]);
@@ -279,7 +286,7 @@ onMounted(async () => {
 <template>
   <div class="app-shell">
     <!-- 顶部工具栏 -->
-    <header class="toolbar">
+    <header class="toolbar" @mousedown="onToolbarMousedown">
       <div class="brand">
         <span class="logo" />
         <span class="name">DocGraph</span>
@@ -470,8 +477,8 @@ onMounted(async () => {
 <style scoped>
 .app-shell { display: flex; flex-direction: column; height: 100%; position: relative; }
 
-/* 无边框窗口：顶部工具栏作为拖拽区，交互元素设为 no-drag */
-.toolbar { -webkit-app-region: drag; }
+/* 无边框窗口：工具栏由 JS 触发原生窗口拖动（start_drag），交互元素不触发 */
+.toolbar { user-select: none; cursor: default; }
 .toolbar .btn, .toolbar .icon-btn, .toolbar input, .toolbar .dropdown-wrap, .toolbar .win-btn, .toolbar .settings-pop { -webkit-app-region: no-drag; }
 .win-controls { display: flex; align-items: center; gap: 2px; margin-left: 6px; }
 .win-btn { display: flex; align-items: center; justify-content: center; width: 34px; height: 30px; border: none; background: transparent; cursor: pointer; font-size: 13px; color: var(--text-2); border-radius: 6px; }
