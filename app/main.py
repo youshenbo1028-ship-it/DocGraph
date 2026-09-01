@@ -71,7 +71,7 @@ def main() -> None:
         height=900,
         min_size=(1080, 700),
         frameless=True,
-        easy_drag=True,  # 整窗默认可拖；配合前端内容区 no-drag 保交互
+        easy_drag=False,  # 保住画布/节点交互（重要）；窗口移动见自定义拖拽区方案
         js_api=WindowApi(),
     )
     webview.start()
