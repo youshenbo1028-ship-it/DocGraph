@@ -61,6 +61,8 @@ def extract_group(
                 summary["errors"].append({"document": doc.file_name, "error": str(exc)})
                 continue
         try:
+            # 重抽取前清理该文档独享的旧实体/关系（避免方向冲突等被丢弃的关系残留）
+            store.clear_document_extraction(doc.id)
             known = [n["data"]["label"] for n in store.get_graph(project_id, group_id)["nodes"]][:KNOWN_ENTITIES_LIMIT]
             candidates: list = []
             relations: list = []

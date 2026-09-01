@@ -295,6 +295,20 @@ class ProjectStore:
 
     # ---------- 抽取结果（实体/关系 upsert + 来源文档聚合） ----------
 
+    def clear_document_extraction(self, doc_id: str) -> None:
+        """重抽取前清理该文档独享的实体/关系。
+
+        避免"方向冲突被丢弃的关系"因 id 不同而残留（重抽取后仍出现在图中）。
+        仅清理仅由该文档产生的实体/关系；被多文档共享的不动。
+        """
+        with self._lock:
+            for table in ("entities", "relations"):
+                for row in self._db.execute(f"SELECT id, source_docs_json FROM {table}").fetchall():
+                    docs = json.loads(row["source_docs_json"])
+                    if len(docs) == 1 and docs[0] == doc_id:
+                        self._db.execute(f"DELETE FROM {table} WHERE id=?", (row["id"],))
+            self._db.commit()
+
     def save_extraction(self, document_id: str, entities: list[Entity], relations: list[Relation]) -> None:
         with self._lock:
             for e in entities:

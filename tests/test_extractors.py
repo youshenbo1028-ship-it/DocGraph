@@ -130,6 +130,39 @@ def test_relations_rewritten_to_ids():
     assert r.evidence == ["e1"]
 
 
+
+def test_merge_resolves_directional_conflicts():
+    """非对称关系反向矛盾：保留置信度高者，另一条进待确认（bug: 互相从属）。"""
+    candidates = [
+        Entity(id="", canonical_name="国务院", confidence=0.9),
+        Entity(id="", canonical_name="办事机构", confidence=0.9),
+    ]
+    relations = [
+        Relation(id="", source_entity_id="办事机构", target_entity_id="国务院", type="从属", confidence=0.95),
+        Relation(id="", source_entity_id="国务院", target_entity_id="办事机构", type="从属", confidence=0.8),
+    ]
+    merged = merge_entities(candidates, relations)
+    assert len(merged.relations) == 1, "应只保留一条从属关系"
+    r = merged.relations[0]
+    assert r.source_entity_id == entity_id("办事机构")  # 保留高置信度方向
+    assert r.target_entity_id == entity_id("国务院")
+    assert r.confidence == 0.95
+    assert any(p["type"] == "directional_conflict" for p in merged.pending)
+
+
+def test_merge_keeps_symmetric_bidirectional():
+    """对称关系（如 比较）双向共存不视为矛盾。"""
+    candidates = [
+        Entity(id="", canonical_name="A", confidence=0.9),
+        Entity(id="", canonical_name="B", confidence=0.9),
+    ]
+    relations = [
+        Relation(id="", source_entity_id="A", target_entity_id="B", type="比较", confidence=0.7),
+        Relation(id="", source_entity_id="B", target_entity_id="A", type="比较", confidence=0.6),
+    ]
+    merged = merge_entities(candidates, relations)
+    assert len(merged.relations) == 2  # 对称关系双向保留
+
 def test_duplicate_relations_merged():
     candidates = [
         Entity(id="", canonical_name="GNN", confidence=0.9),

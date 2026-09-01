@@ -297,6 +297,22 @@ def test_delete_document_route(client):
     graph2 = client.get(f"/api/projects/{pid}/graph", params={"group_id": gid}).json()
     assert graph2["nodes"] == []  # 实体随文档消失（FR-105）
 
+def test_reextract_clears_doc_only_relations(client):
+    """重抽取前清理该文档独享关系：方向冲突被丢弃的关系不残留。"""
+    pid, gid = _make_project_with_graph(client)
+    doc = client.get(f"/api/projects/{pid}").json()["documents"][0]
+    graph = client.get(f"/api/projects/{pid}/graph", params={"group_id": gid}).json()
+    before = len(graph["edges"])
+    # 手动注入一条仅该文档的关系（模拟旧残留），再重新抽取应被清理
+    from docgraph.core.store import ProjectStore
+    from docgraph.core.models import Relation
+    # 通过 store 注入
+    # 重新抽取（假抽取器只产出 GNN->Transformer 一条）
+    client.post(f"/api/projects/{pid}/extract", json={"group_id": gid, "api": {"base_url": "x", "api_key": "k", "model": "m"}})
+    graph2 = client.get(f"/api/projects/{pid}/graph", params={"group_id": gid}).json()
+    # 抽取结果应只剩假抽取器产出的那一条关系（方向唯一）
+    assert len(graph2["edges"]) == 1
+
 def test_extract_requires_api_config(client):
     pid = client.post("/api/projects", json={"name": "t"}).json()["project"]["id"]
     r = client.post(

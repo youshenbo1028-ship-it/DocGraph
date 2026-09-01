@@ -22,6 +22,49 @@ _WS = re.compile(r"\s+")
 
 PENDING_WINDOW = 0.15  # 相似度在 [threshold-window, threshold) 视为待确认
 
+# 有方向性的关系类型：A -> B 与 B -> A 不应同时存在（避免"互相从属"类矛盾）
+ASYMMETRIC_RELATION_TYPES = {
+    "从属", "基于", "属于", "提出", "改进", "包含", "引用", "验证", "应用于",
+}
+
+
+def _resolve_directional_conflicts(
+    relations: list[Relation],
+    pending: list[dict],
+) -> list[Relation]:
+    """对非对称关系类型做方向冲突检测：A->B 与 B->A 同时存在时保留置信度高者，另一条进待确认。"""
+    if not relations:
+        return relations
+    by_key: dict[tuple[str, str, str], Relation] = {}
+    for r in relations:
+        by_key[(r.source_entity_id, r.target_entity_id, r.type)] = r
+    kept_ids = {r.id for r in relations}
+    seen = set()
+    for (a, b, t), r in by_key.items():
+        if t not in ASYMMETRIC_RELATION_TYPES:
+            continue
+        rev = by_key.get((b, a, t))
+        if rev is None:
+            continue
+        pair = frozenset((a, b, t))
+        if pair in seen:
+            continue
+        seen.add(pair)
+        keep, drop = (r, rev) if r.confidence >= rev.confidence else (rev, r)
+        kept_ids.discard(drop.id)
+        pending.append(
+            {
+                "type": "directional_conflict",
+                "source": keep.source_entity_id,
+                "target": keep.target_entity_id,
+                "relation": t,
+                "kept_confidence": round(keep.confidence, 3),
+                "dropped_confidence": round(drop.confidence, 3),
+                "note": "非对称关系同时存在反向，已保留置信度高者",
+            }
+        )
+    return [r for r in relations if r.id in kept_ids]
+
 
 def normalize_name(name: str) -> str:
     """规范化名称：全角转半角（NFKC）、统一大小写、折叠空白。"""
@@ -157,4 +200,8 @@ def merge_entities(
                 if ev not in existing.evidence:
                     existing.evidence.append(ev)
 
-    return MergeResult(entities=final_entities, relations=list(final_relations.values()), pending=pending)
+    final_relations_list = list(final_relations.values())
+    # 6) 方向冲突检测（非对称关系反向矛盾 -> 保留高置信度，另一条进待确认）
+    final_relations_list = _resolve_directional_conflicts(final_relations_list, pending)
+
+    return MergeResult(entities=final_entities, relations=final_relations_list, pending=pending)
