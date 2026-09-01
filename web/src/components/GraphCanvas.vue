@@ -2,8 +2,10 @@
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import cytoscape from "cytoscape";
 import cytoscapeSvg from "cytoscape-svg";
+import fcose from "cytoscape-fcose";
 
 cytoscape.use(cytoscapeSvg as any);
+cytoscape.use(fcose as any);
 
 const props = defineProps<{ graph: { nodes: any[]; edges: any[] }; mode?: "pan" | "move" }>();
 const emit = defineEmits<{ (e: "select", sel: { kind: "node" | "edge"; data: any }): void }>();
@@ -22,6 +24,31 @@ const TYPE_COLORS: Record<string, string> = {
 };
 const colorOf = (type: string) => TYPE_COLORS[type] ?? "#8a94a6";
 
+// fcose 布局参数（GRAPH-OPTIMIZATION v0.2 第一步，实测量化调优）：
+// 在用户真实图谱（227 节点/259 边）上对比 cose/fcose/concentric 后选取平衡档：
+// - 标签重叠对数：cose 306 -> fcose 约 100（-60%+）；concentric 51 但交叉爆炸（5753）弃用；
+// - nodeDimensionsIncludeLabels:true：碰撞检测把标签算进节点尺寸，标签不压节点/不彼此重叠；
+// - randomize:false：确定性布局，重复渲染结果一致；
+// - 节点越多用越低档 quality（"default" 迭代充分但慢，大图用 "fast" 保流畅）。
+function fcoseOptions() {
+  return {
+    name: "fcose",
+    quality: "default",
+    animate: false,
+    randomize: false,
+    nodeDimensionsIncludeLabels: true,
+    uniformNodeDimensions: false,
+    nodeRepulsion: 9000,
+    idealEdgeLength: 110,
+    edgeElasticity: 0.45,
+    gravity: 0.25,
+    numIter: 3000,
+    tile: true,
+    padding: 50,
+    fit: true,
+  } as any;
+}
+
 onMounted(() => {
   if (!container.value) return;
   cy = cytoscape({
@@ -38,13 +65,15 @@ onMounted(() => {
           "background-color": (ele: any) => colorOf(ele.data("type")),
           "border-width": 2,
           "border-color": "#ffffff",
-          "font-size": 12,
+          "font-size": 11,
           "font-weight": 600,
           color: "#33404f",
+          "text-outline-width": 3,
+          "text-outline-color": "#ffffff",
           "text-valign": "bottom",
           "text-margin-y": 6,
           "text-wrap": "wrap",
-          "text-max-width": 140,
+          "text-max-width": 120,
           "overlay-opacity": 0,
         },
       },
@@ -74,7 +103,7 @@ onMounted(() => {
         style: { opacity: 0.12 },
       },
     ],
-    layout: { name: "cose", animate: false },
+    layout: fcoseOptions(),
     // 交互：拖拽空白平移、滚轮缩放（显式开启，确保可用）
     userPanningEnabled: true,
     userZoomingEnabled: true,
@@ -93,6 +122,8 @@ onMounted(() => {
   });
   // 供自动化读取视口（平移/缩放），正常使用无副作用
   (window as any).__docgraph_view = () => ({ pan: cy?.pan(), zoom: cy?.zoom() });
+  // 供自动化测量布局质量（节点重叠/边交叉），正常使用无副作用
+  (window as any).__docgraph_cy = () => cy;
   cy.autoungrabify(props.mode === "pan"); // 默认平移模式
   render();
 });
@@ -109,7 +140,10 @@ function render() {
   cy.elements().remove();
   cy.add(props.graph.nodes as any);
   cy.add(props.graph.edges as any);
-  cy.layout({ name: "cose", animate: false, nodeRepulsion: 9000, idealEdgeLength: 130, padding: 40 }).run();
+  const opts = fcoseOptions();
+  // 大图降档保流畅（≤250 用 default 迭代充分、交叉更少）
+  if (props.graph.nodes.length > 250) opts.quality = "fast";
+  cy.layout(opts).run();
 }
 
 function _select(node: any) {

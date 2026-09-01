@@ -1,7 +1,7 @@
 {
   "name": "docgraph-web",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,12 +12,14 @@
   },
   "dependencies": {
     "cytoscape": "^3.30.0",
+    "cytoscape-dagre": "^4.0.1",
+    "cytoscape-fcose": "^2.2.0",
     "cytoscape-svg": "^0.2.0",
     "vue": "^3.4.0"
   },
   "devDependencies": {
-    "@types/cytoscape": "^3.21.0",
     "@playwright/test": "^1.44.0",
+    "@types/cytoscape": "^3.21.0",
     "@vitejs/plugin-vue": "^5.0.0",
     "typescript": "^5.4.0",
     "vite": "^5.2.0",
