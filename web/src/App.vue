@@ -18,7 +18,8 @@ const loading = ref(false);
 const hasKey = ref(false);
 const search = ref("");
 const typeFilter = ref<string>("");
-const hideIsolated = ref(false);
+// 最小连接数筛选：默认 1（隐藏孤立节点），可切 ≥2/≥3 看核心网（FR-506 最小度数筛选）
+const minDegree = ref(1);
 const graphMode = ref<"pan" | "move">("move"); // 默认移动节点：点击实体可直接拖动，空白处仍可平移
 const canvasRef = ref<InstanceType<typeof GraphCanvas> | null>(null);
 const showSettings = ref(false);
@@ -46,22 +47,21 @@ function toast(type: Toast["type"], msg: string, actions?: ToastAction[]) {
 // ---- 筛选/统计 ----
 const graph = computed(() => {
   const kw = search.value.trim().toLowerCase();
+  // 度数基于全图边计算（不随筛选变化），保证「≥2 条连接」语义稳定
+  const degMap = new Map<string, number>();
+  for (const e of fullGraph.value.edges) {
+    degMap.set(e.data.source, (degMap.get(e.data.source) ?? 0) + 1);
+    degMap.set(e.data.target, (degMap.get(e.data.target) ?? 0) + 1);
+  }
   const nodes = fullGraph.value.nodes.filter((n) => {
     const data = n.data;
+    if (minDegree.value > 0 && (degMap.get(data.id) ?? 0) < minDegree.value) return false;
     if (typeFilter.value && data.type !== typeFilter.value) return false;
     if (kw && !String(data.label).toLowerCase().includes(kw)) return false;
     return true;
   });
   const ids = new Set(nodes.map((n) => n.data.id));
-  let edges = fullGraph.value.edges.filter((e) => ids.has(e.data.source) && ids.has(e.data.target));
-  // 隐藏孤立节点：仅保留出现在边中的节点
-  if (hideIsolated.value) {
-    const connected = new Set(edges.flatMap((e) => [e.data.source, e.data.target]));
-    const kept = nodes.filter((n) => connected.has(n.data.id));
-    const keptIds = new Set(kept.map((n) => n.data.id));
-    edges = edges.filter((e) => keptIds.has(e.data.source) && keptIds.has(e.data.target));
-    return { nodes: kept, edges };
-  }
+  const edges = fullGraph.value.edges.filter((e) => ids.has(e.data.source) && ids.has(e.data.target));
   return { nodes, edges };
 });
 const nodeTypes = computed(() => Array.from(new Set(fullGraph.value.nodes.map((n) => n.data.type || "未知"))));
@@ -519,9 +519,12 @@ onMounted(async () => {
           <button v-for="t in nodeTypes" :key="t" class="chip" :class="{ active: typeFilter === t }" @click="typeFilter = typeFilter === t ? '' : t">{{ t }}</button>
           <button class="mode-btn" :class="{'active': graphMode === 'pan'}" @click="graphMode = 'pan'" title="拖拽任意处平移画布">🖐 平移</button>
           <button class="mode-btn" :class="{'active': graphMode === 'move'}" @click="graphMode = 'move'" title="拖拽节点以移动其位置（空白仍可平移）">✋ 移动节点</button>
-          <label class="iso-toggle" title="仅显示与其他实体有关联的节点">
-            <input type="checkbox" v-model="hideIsolated" /> 隐藏孤立节点
-          </label>
+          <select v-model="minDegree" class="degree-filter" title="按连接数筛选节点（降低视觉噪音）">
+            <option :value="0">显示全部</option>
+            <option :value="1">隐藏孤立节点</option>
+            <option :value="2">≥2 条连接</option>
+            <option :value="3">≥3 条连接</option>
+          </select>
           <span class="stats">{{ graph.nodes.length }} 节点 · {{ graph.edges.length }} 关系</span>
         </div>
         <div class="graph-area">
@@ -719,6 +722,7 @@ onMounted(async () => {
 .chip:hover { border-color: var(--border-strong); }
 .chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 .stats { margin-left: auto; font-size: 12px; color: var(--muted); }
+.degree-filter { font-size: 12px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-1); color: var(--text-2); }
 .iso-toggle { font-size: 12px; color: var(--text-2); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
 .mode-btn { font-size: 11px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer; color: var(--text-2); }
 .mode-btn.active { background: #e6eef8; border-color: #bad2eb; color: #2c5c8a; font-weight: 600; }
