@@ -9,13 +9,24 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .models import DEFAULT_ENTITY_TYPES, DEFAULT_RELATION_TYPES, Chunk, Document, Entity, Group, Project, Relation
+from .models import (
+    DEFAULT_ENTITY_TYPES,
+    DEFAULT_RELATION_TYPES,
+    GROUP_PRESETS,
+    Chunk,
+    Document,
+    Entity,
+    Group,
+    Project,
+    Relation,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS projects (
@@ -174,10 +185,20 @@ class ProjectStore:
         entity_types: list[str] | None = None,
         relation_types: list[str] | None = None,
         extract_config: dict | None = None,
+        preset: str | None = None,
     ) -> Group:
         gid = uuid.uuid4().hex
-        et = list(entity_types) if entity_types else list(DEFAULT_ENTITY_TYPES)
-        rt = list(relation_types) if relation_types else list(DEFAULT_RELATION_TYPES)
+        if preset and preset not in GROUP_PRESETS:
+            raise ValueError(f"未知的分组预设：{preset}（可选：{', '.join(GROUP_PRESETS)}）")
+        # 预设优先，显式传入的类型表可覆盖预设（FR-310 组级独立配置）
+        if preset:
+            et, rt = GROUP_PRESETS[preset]
+        else:
+            et, rt = list(DEFAULT_ENTITY_TYPES), list(DEFAULT_RELATION_TYPES)
+        if entity_types is not None:
+            et = list(entity_types)
+        if relation_types is not None:
+            rt = list(relation_types)
         with self._lock:
             self._db.execute(
                 "INSERT INTO groups (id, project_id, name, entity_types, relation_types, extract_config) VALUES (?,?,?,?,?,?)",
@@ -234,6 +255,46 @@ class ProjectStore:
         doc = self.get_document(doc_id)
         assert doc is not None
         return doc
+
+    def move_document(self, doc_id: str, group_id: str) -> None:
+        """把文档移动到目标分组（FR-310：一个文档属于一个分组；用于拖到分组组织查看）。"""
+        doc = self.get_document(doc_id)
+        if doc is None:
+            raise ValueError("文档不存在")
+        with self._lock:
+            self._db.execute("UPDATE documents SET group_id=? WHERE id=?", (group_id, doc_id))
+            self._db.commit()
+
+    def copy_document(self, doc_id: str, target_group_id: str) -> Document:
+        """跨分组复用同一源文档：自动复制文件并重命名为项目内唯一名（FR-310）。
+
+        - 新副本为独立文档（status=pending，需重新解析抽取），与原件互不影响；
+        - 命名规则：报告.pdf -> 报告 (2).pdf（避开项目内已有文档名）。
+        """
+        src = self.get_document(doc_id)
+        if src is None:
+            raise ValueError("文档不存在")
+        src_path = Path(src.path)
+        new_name = self._unique_copy_name(src.project_id, src_path)
+        new_path = src_path.parent / new_name
+        shutil.copy2(src_path, new_path)
+        return self.add_document(
+            src.project_id, target_group_id, str(new_path), format=src.format
+        )
+
+    def _unique_copy_name(self, project_id: str, src_path: Path) -> str:
+        stem, suffix = src_path.stem, src_path.suffix
+        candidate = src_path.name
+        n = 2
+        while True:
+            exists = self._db.execute(
+                "SELECT 1 FROM documents WHERE project_id=? AND path=?",
+                (project_id, str(src_path.parent / candidate)),
+            ).fetchone()
+            if not exists:
+                return candidate
+            candidate = stem + " (" + str(n) + ")" + suffix
+            n += 1
 
     def get_document(self, doc_id: str) -> Document | None:
         row = self._db.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone()

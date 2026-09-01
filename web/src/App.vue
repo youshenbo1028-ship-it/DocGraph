@@ -24,17 +24,23 @@ const canvasRef = ref<InstanceType<typeof GraphCanvas> | null>(null);
 const showSettings = ref(false);
 const showExport = ref(false);
 const newGroupName = ref("");
+const newGroupPreset = ref<"academic" | "legal">("academic");
+const copyDoc = ref<any | null>(null);      // 正在选择「复制到哪个分组」的文档
+const dragDocId = ref<string | null>(null); // 正在拖拽的文档
+const dragOverGroup = ref<string | null>(null);
 
 const apiCfg = ref<ApiConfig>({ base_url: "https://api.deepseek.com/v1", api_key: "", model: "deepseek-chat" });
 
 // ---- Toast 通知 ----
-interface Toast { id: number; type: "info" | "success" | "error"; msg: string }
+interface ToastAction { label: string; fn: () => void }
+interface Toast { id: number; type: "info" | "success" | "error"; msg: string; actions?: ToastAction[] }
 const toasts = ref<Toast[]>([]);
 let toastId = 0;
-function toast(type: Toast["type"], msg: string) {
+function toast(type: Toast["type"], msg: string, actions?: ToastAction[]) {
   const id = ++toastId;
-  toasts.value.push({ id, type, msg });
-  setTimeout(() => { toasts.value = toasts.value.filter((t) => t.id !== id); }, type === "error" ? 6000 : 3200);
+  toasts.value.push({ id, type, msg, actions });
+  const ttl = actions?.length ? 15000 : (type === "error" ? 6000 : 3200);
+  setTimeout(() => { toasts.value = toasts.value.filter((t) => t.id !== id); }, ttl);
 }
 
 // ---- 筛选/统计 ----
@@ -59,6 +65,22 @@ const graph = computed(() => {
   return { nodes, edges };
 });
 const nodeTypes = computed(() => Array.from(new Set(fullGraph.value.nodes.map((n) => n.data.type || "未知"))));
+
+// ---- 分组与文档（组织查看） ----
+// 「默认组」即未分组桶：新导入的文档默认落在这里，显示为「未分组」便于理解
+const LEGAL_ET = ["法律/法规文件", "机构/组织", "人员/角色", "权利/义务", "行为/事项", "程序/制度", "处罚/责任", "概念/术语"];
+const displayGroupName = (g: any) => (g?.name === "默认组" ? "未分组" : g?.name ?? "");
+const groupPresetLabel = (g: any) => {
+  if (!g) return "";
+  if (g.entity_types?.length === LEGAL_ET.length && g.entity_types.every((t: string, i: number) => t === LEGAL_ET[i])) return "法律";
+  if (g.relation_types?.includes("属于") && g.relation_types?.includes("提出")) return "学术";
+  return "自定义";
+};
+const groupDocs = (gid: string) => documents.value.filter((d) => d.group_id === gid);
+// 选中分组时只显示该组文档；「全部文件」显示全部
+const visibleDocs = computed(() =>
+  selectedGroupId.value ? documents.value.filter((d) => d.group_id === selectedGroupId.value) : documents.value,
+);
 
 // ---- 业务 ----
 async function loadSettings() {
@@ -92,7 +114,7 @@ async function loadProject() {
   project.value = p.project;
   groups.value = p.groups;
   documents.value = p.documents;
-  if (!selectedGroupId.value && groups.value.length) selectedGroupId.value = groups.value[0].id;
+  // 默认「全部文件」视图（不自动选中第一个分组，避免用户困惑）
   await refreshGraph();
 }
 async function refreshGraph() {
@@ -135,12 +157,13 @@ async function importFiles(files: File[]) {
     let ok = 0, skip = 0;
     for (const f of files) {
       try {
-        await api.importDocument(pid.value!, f, selectedGroupId.value ?? undefined);
+        // 导入默认进「全部文件（未分组/默认组）」，之后可拖拽/复制到其他分组
+        await api.importDocument(pid.value!, f);
         ok++;
       } catch { skip++; }
     }
     await loadProject();
-    toast("success", `已导入 ${ok} 个文档` + (skip ? `（失败/重名跳过 ${skip} 个）` : ""));
+    toast("success", `已导入 ${ok} 个文档到「全部文件」` + (skip ? `（失败/重名跳过 ${skip} 个）` : ""));
   } catch (e: any) {
     toast("error", String(e?.message ?? e));
   } finally {
@@ -190,15 +213,49 @@ async function onSaveSettings() {
 async function onCreateGroup() {
   if (!pid.value || !newGroupName.value.trim()) return;
   try {
-    await api.createGroup(pid.value, newGroupName.value.trim());
+    await api.createGroup(pid.value, newGroupName.value.trim(), newGroupPreset.value);
     newGroupName.value = "";
     await loadProject();
-    toast("success", "分组已创建");
+    toast("success", "分组已创建（" + (newGroupPreset.value === "legal" ? "法律法规" : "学术论文") + "抽取类型）");
   } catch (e: any) {
     toast("error", String(e?.message ?? e));
   }
 }
 function selectGroup(id: string) { selectedGroupId.value = id || null; refreshGraph(); }
+
+// 拖拽文档 -> 分组 = 移动（FR-310：一个文档属于一个分组）
+function onDocDragStart(e: DragEvent, d: any) {
+  dragDocId.value = d.id;
+  if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; }
+}
+async function onDropToGroup(groupId: string) {
+  const docId = dragDocId.value;
+  dragOverGroup.value = null;
+  dragDocId.value = null;
+  if (!docId || !pid.value) return;
+  const g = groups.value.find((x) => x.id === groupId);
+  try {
+    await api.moveDocument(pid.value, docId, groupId);
+    await loadProject();
+    toast("success", "已移动文档到「" + displayGroupName(g) + "」");
+  } catch (e: any) {
+    toast("error", "移动失败：" + String(e?.message ?? e));
+  }
+}
+// 复制到其他分组 = 自动复制 + 重命名（FR-310：跨分组复用同一源文档）
+async function doCopyTo(groupId: string) {
+  const d = copyDoc.value;
+  copyDoc.value = null;
+  if (!d || !pid.value) return;
+  const g = groups.value.find((x) => x.id === groupId);
+  try {
+    const nd = await api.copyDocument(pid.value, d.id, groupId);
+    await loadProject();
+    toast("success", "已复制为「" + nd.file_name + "」到「" + displayGroupName(g) + "」（副本为独立文档，可单独抽取）");
+  } catch (e: any) {
+    toast("error", "复制失败：" + String(e?.message ?? e));
+  }
+}
 async function onSelect(sel: any) {
   selected.value = sel;
   detail.value = null;
@@ -212,21 +269,49 @@ async function onSelect(sel: any) {
   finally { detailLoading.value = false; }
 }
 
-function downloadDataUrl(url: string | null, filename: string) {
-  if (!url) return;
-  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+function utf8ToB64(s: string): string {
+  const bytes = new TextEncoder().encode(s);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
 }
-function onExport(kind: "png" | "svg" | "json" | "csv") {
+function openFolder(dir: string) {
+  const api_ = (window as any).pywebview?.api;
+  if (api_?.open_folder) api_.open_folder(dir);
+  else toast("info", "导出目录：" + dir);
+}
+// 导出：写入固定导出目录（%LOCALAPPDATA%\DocGraph\exports\<项目名>），并提示路径 + 打开文件夹
+async function onExport(kind: "png" | "svg" | "json" | "csv") {
   showExport.value = false;
-  if (kind === "png") downloadDataUrl(canvasRef.value?.exportPng() ?? null, "graph.png");
-  else if (kind === "svg") {
-    const svg = canvasRef.value?.exportSvg(); if (!svg) return;
-    const u = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-    downloadDataUrl(u, "graph.svg"); URL.revokeObjectURL(u);
-  } else if (kind === "json" && pid.value) api.downloadExport(pid.value, "graph.json", selectedGroupId.value ?? undefined);
-  else if (kind === "csv" && pid.value) {
-    api.downloadExport(pid.value, "nodes.csv", selectedGroupId.value ?? undefined);
-    api.downloadExport(pid.value, "edges.csv", selectedGroupId.value ?? undefined);
+  if (!pid.value) return;
+  try {
+    const jobs: { kind: string; filename: string; contentB64?: string }[] = [];
+    if (kind === "png") {
+      const url = canvasRef.value?.exportPng();
+      if (!url) { toast("error", "导出失败：画布暂无内容"); return; }
+      jobs.push({ kind: "png", filename: "graph.png", contentB64: url.split(",")[1] ?? "" });
+    } else if (kind === "svg") {
+      const svg = canvasRef.value?.exportSvg();
+      if (!svg) { toast("error", "导出失败：画布暂无内容"); return; }
+      jobs.push({ kind: "svg", filename: "graph.svg", contentB64: utf8ToB64(svg) });
+    } else if (kind === "json") {
+      jobs.push({ kind: "graph.json", filename: "graph.json" });
+    } else {
+      jobs.push({ kind: "nodes.csv", filename: "nodes.csv" });
+      jobs.push({ kind: "edges.csv", filename: "edges.csv" });
+    }
+    const paths: string[] = [];
+    let dir = "";
+    for (const j of jobs) {
+      const res = await api.saveExport(pid.value, j.kind, j.filename, j.contentB64, selectedGroupId.value ?? undefined);
+      paths.push(res.path);
+      dir = res.dir;
+    }
+    toast("success", "已导出 " + paths.length + " 个文件：\n" + paths.join("\n"), [
+      { label: "打开文件夹", fn: () => openFolder(dir) },
+    ]);
+  } catch (e: any) {
+    toast("error", "导出失败：" + String(e?.message ?? e));
   }
 }
 
@@ -367,26 +452,63 @@ onMounted(async () => {
 
     <!-- 主区域 -->
     <main class="layout">
-      <!-- 左：分组 + 文档 -->
+      <!-- 左：分组 + 文档（全部文件 = 所有文档；拖文档到分组 = 移动；⧉ = 复制） -->
       <aside class="panel left">
-        <div class="sec-head">分组</div>
+        <div class="sec-head">分组与文档</div>
         <button class="group-item" :class="{ active: !selectedGroupId }" @click="selectGroup('')">
-          <span class="gicon">🗂</span> 全部
+          <span class="gicon">🗂</span> 全部文件 <span class="gcount">{{ documents.length }}</span>
         </button>
-        <button v-for="g in groups" :key="g.id" class="group-item" :class="{ active: selectedGroupId === g.id }" @click="selectGroup(g.id)">
-          <span class="gicon">📁</span> {{ g.name }}
-        </button>
+        <div
+          v-for="g in groups"
+          :key="g.id"
+          class="group-item"
+          :class="{ active: selectedGroupId === g.id, 'drag-over': dragOverGroup === g.id }"
+          @click="selectGroup(g.id)"
+          @dragover.prevent="dragOverGroup = g.id"
+          @dragleave="dragOverGroup = null"
+          @drop="onDropToGroup(g.id)"
+        >
+          <span class="gicon">📁</span> {{ displayGroupName(g) }}
+          <span class="gcount">{{ groupDocs(g.id).length }}</span>
+          <span class="g-preset">{{ groupPresetLabel(g) }}</span>
+        </div>
         <div class="group-add">
-          <input v-model="newGroupName" placeholder="新建分组…" @keyup.enter="onCreateGroup" />
+          <input v-model="newGroupName" placeholder="新分组名…" @keyup.enter="onCreateGroup" />
+          <select v-model="newGroupPreset" class="preset-select" title="抽取类型表预设">
+            <option value="academic">学术论文</option>
+            <option value="legal">法律法规</option>
+          </select>
           <button class="icon-btn sm" title="创建分组" @click="onCreateGroup">＋</button>
         </div>
 
-        <div class="sec-head">文档 <span class="count">{{ documents.length }}</span></div>
-        <div v-if="!documents.length" class="empty-mini">还没有文档<br />点击「导入文档」开始</div>
-        <div v-for="d in documents" :key="d.id" class="doc-item">
+        <div class="sec-head">文档 <span class="count">{{ visibleDocs.length }}</span></div>
+        <div v-if="!visibleDocs.length" class="empty-mini">该视图暂无文档<br />点击「导入文档」开始（默认进入全部文件）</div>
+        <div
+          v-for="d in visibleDocs"
+          :key="d.id"
+          class="doc-item"
+          draggable="true"
+          @dragstart="onDocDragStart($event, d)"
+          @dragend="dragDocId = null"
+        >
           <span class="doc-name" :title="d.file_name">{{ d.file_name }}</span>
           <span class="pill" :class="'pill-' + d.status">{{ STATUS_LABEL[d.status] ?? d.status }}</span>
+          <button class="doc-copy" title="复制到其他分组（自动重命名，副本独立抽取）" @click.stop="copyDoc = d">⧉</button>
           <button class="doc-del" title="删除该文档（含其抽取结果）" @click="onDeleteDoc(d)">✕</button>
+        </div>
+        <div v-if="dragDocId" class="drag-hint">拖动到上方分组可移动该文档</div>
+
+        <!-- 复制到分组小菜单 -->
+        <div v-if="copyDoc" class="copy-pop" @click.stop>
+          <div class="pop-title">复制「{{ copyDoc.file_name }}」到：</div>
+          <button
+            v-for="g in groups"
+            :key="g.id"
+            class="group-item"
+            :disabled="g.id === copyDoc.group_id"
+            @click="doCopyTo(g.id)"
+          >{{ displayGroupName(g) }}</button>
+          <button class="btn ghost sm" @click="copyDoc = null">取消</button>
         </div>
       </aside>
 
@@ -486,7 +608,10 @@ onMounted(async () => {
 
     <!-- Toast -->
     <div class="toasts">
-      <div v-for="t in toasts" :key="t.id" class="toast" :class="'toast-' + t.type">{{ t.msg }}</div>
+      <div v-for="t in toasts" :key="t.id" class="toast" :class="'toast-' + t.type">
+        <span class="toast-msg">{{ t.msg }}</span>
+        <button v-for="a in t.actions" :key="a.label" class="toast-act" @click="a.fn()">{{ a.label }}</button>
+      </div>
     </div>
   </div>
 </template>
@@ -545,7 +670,7 @@ onMounted(async () => {
 
 /* 主布局 */
 .layout { display: flex; flex: 1; min-height: 0; }
-.panel { width: 232px; padding: 14px 12px; overflow-y: auto; background: var(--surface); }
+.panel { position: relative; width: 232px; padding: 14px 12px; overflow-y: auto; background: var(--surface); }
 .panel.left { border-right: 1px solid var(--border); }
 .panel.right { border-right: 1px solid var(--border); background: var(--surface-2); }
 .sec-head { font-size: 12px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .5px; margin: 12px 4px 8px; display: flex; align-items: center; justify-content: space-between; }
@@ -556,6 +681,19 @@ onMounted(async () => {
 .group-item:hover { background: var(--surface-2); }
 .group-item.active { background: var(--primary-100); color: var(--primary-600); font-weight: 600; }
 .gicon { font-size: 14px; }
+.gcount { margin-left: auto; font-size: 11px; color: var(--text-3); background: var(--surface-2); border-radius: 8px; padding: 0 6px; line-height: 16px; }
+.g-preset { font-size: 10px; color: var(--primary-600); background: var(--primary-100); border-radius: 4px; padding: 0 4px; margin-left: 4px; flex-shrink: 0; }
+.group-item.drag-over { background: var(--primary-100); outline: 2px dashed var(--primary-500); }
+.preset-select { font-size: 11px; padding: 3px 4px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-1); color: var(--text-2); max-width: 84px; }
+.doc-copy { border: none; background: transparent; color: #8a94a6; cursor: pointer; font-size: 12px; line-height: 1; padding: 2px 5px; border-radius: 4px; flex-shrink: 0; }
+.doc-copy:hover { color: var(--primary-600); background: var(--primary-100); }
+.drag-hint { margin-top: 6px; font-size: 11px; color: var(--primary-600); text-align: center; }
+.copy-pop { position: absolute; left: 10px; right: 10px; bottom: 60px; z-index: 30; background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: 0 6px 24px rgba(0,0,0,.18); padding: 8px; }
+.copy-pop .pop-title { font-size: 12px; color: var(--text-2); margin-bottom: 6px; font-weight: 600; }
+.copy-pop .group-item:disabled { opacity: .4; cursor: not-allowed; }
+.toast-msg { white-space: pre-line; }
+.toast-act { margin-left: 10px; padding: 3px 10px; border: none; border-radius: 4px; background: var(--primary-500); color: #fff; cursor: pointer; font-size: 12px; flex-shrink: 0; }
+.toast-act:hover { background: var(--primary-600); }
 .group-add { display: flex; gap: 6px; margin: 6px 2px 0; }
 .group-add input { flex: 1; min-width: 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 12px; outline: none; }
 .group-add input:focus { border-color: var(--primary); }

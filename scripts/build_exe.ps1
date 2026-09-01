@@ -1,4 +1,4 @@
-# 打包单文件 exe（PyInstaller onefile，FR-901）
+﻿# 打包单文件 exe（PyInstaller onefile，FR-901）
 # 用法: powershell -ExecutionPolicy Bypass -File scripts/build_exe.ps1
 # 前置: .venv 已激活（uv venv --python 3.10 && uv pip install -e ".[dev]"）
 $ErrorActionPreference = "Stop"

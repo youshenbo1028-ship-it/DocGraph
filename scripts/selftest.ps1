@@ -1,7 +1,11 @@
-# DocGraph 自动化自测（用户交互 + 关键流程）
+﻿# DocGraph 自动化自测（用户交互 + 关键流程）
 # 用法: powershell -ExecutionPolicy Bypass -File scripts/selftest.ps1
 # 覆盖: 后端 pytest / 前端 tsc+vite / 种子数据 / 后端 API / Playwright UI 交互
-$ErrorActionPreference = "Stop"
+# 兼容 Windows PowerShell 5.1：native 命令（node/vite/npx）向 stderr 打警告时
+# 在 Stop 模式下会触发 NativeCommandError 中断脚本（pwsh 7 无此问题）。
+# 改为 Continue，各步骤已用 $LASTEXITCODE 显式判定失败。
+$ErrorActionPreference = "Continue"
+$PSNativeCommandUseErrorActionPreference = $false 2>$null
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 

@@ -8,6 +8,8 @@ M1 说明：LLM API 配置在抽取请求中传入（密钥安全存储 FR-802 �
 
 from __future__ import annotations
 
+import base64
+import json
 import os
 import uuid
 from pathlib import Path
@@ -119,6 +121,18 @@ class GroupCreate(BaseModel):
     name: str
     entity_types: list[str] | None = None
     relation_types: list[str] | None = None
+    preset: str | None = None  # academic | legal（组级抽取类型表预设，FR-310）
+
+
+class DocGroupRequest(BaseModel):
+    group_id: str
+
+
+class ExportSaveRequest(BaseModel):
+    kind: str  # png | svg | graph.json | nodes.csv | edges.csv
+    filename: str | None = None
+    content_base64: str | None = None  # png/svg 由前端生成后回传
+    group_id: str | None = None
 
 
 class ExtractRequest(BaseModel):
@@ -228,7 +242,7 @@ def _project_detail(store: ProjectStore, pid: str) -> dict:
 # ---------- 路由 ----------
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="DocGraph", version="0.3.0")
+    app = FastAPI(title="DocGraph", version="0.4.0")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],  # 本地桌面应用（开发模式前端在 5173）
@@ -273,12 +287,16 @@ def create_app() -> FastAPI:
     @app.post("/api/projects/{pid}/groups")
     def create_group(pid: str, req: GroupCreate) -> dict:
         store = registry.open(pid)
-        g = store.create_group(
-            pid,
-            req.name,
-            entity_types=req.entity_types,
-            relation_types=req.relation_types,
-        )
+        try:
+            g = store.create_group(
+                pid,
+                req.name,
+                entity_types=req.entity_types,
+                relation_types=req.relation_types,
+                preset=req.preset,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"id": g.id, "name": g.name, "entity_types": g.entity_types, "relation_types": g.relation_types}
 
     @app.post("/api/projects/{pid}/documents")
@@ -336,6 +354,33 @@ def create_app() -> FastAPI:
         file_name = Path(doc.path).name
         store.delete_document(doc_id)  # 级联删除分块/证据，并清理实体/关系来源（FR-105）
         return {"deleted": doc_id, "file_name": file_name}
+
+    @app.post("/api/projects/{pid}/documents/{doc_id}/move")
+    def move_document_route(pid: str, doc_id: str, req: DocGroupRequest) -> dict:
+        """把文档移动到目标分组（拖拽组织，FR-310）。"""
+        store = registry.open(pid)
+        doc = store.get_document(doc_id)
+        if doc is None or doc.project_id != pid:
+            raise HTTPException(status_code=404, detail="文档不存在")
+        if store.get_group(req.group_id) is None:
+            raise HTTPException(status_code=404, detail="目标分组不存在")
+        store.move_document(doc_id, req.group_id)
+        return _document_payload(store.get_document(doc_id))
+
+    @app.post("/api/projects/{pid}/documents/{doc_id}/copy")
+    def copy_document_route(pid: str, doc_id: str, req: DocGroupRequest) -> dict:
+        """跨分组复用：自动复制文件并重命名为不重名副本（FR-310）。"""
+        store = registry.open(pid)
+        doc = store.get_document(doc_id)
+        if doc is None or doc.project_id != pid:
+            raise HTTPException(status_code=404, detail="文档不存在")
+        if store.get_group(req.group_id) is None:
+            raise HTTPException(status_code=404, detail="目标分组不存在")
+        try:
+            new_doc = store.copy_document(doc_id, req.group_id)
+        except DuplicateNameError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _document_payload(new_doc)
 
     @app.post("/api/projects/{pid}/extract")
     def run_extract(pid: str, req: ExtractRequest) -> dict:
@@ -452,6 +497,69 @@ def create_app() -> FastAPI:
             "nodes": g["nodes"],
             "edges": g["edges"],
         }
+
+    @app.post("/api/projects/{pid}/export/save")
+    def save_export(pid: str, req: ExportSaveRequest) -> dict:
+        """把导出内容写入固定导出目录（%LOCALAPPDATA%\DocGraph\exports\<项目名>），返回绝对路径。
+
+        - png/svg：前端生成内容后以 base64 回传；
+        - graph.json / nodes.csv / edges.csv：服务端直接生成。
+        """
+        store = registry.open(pid)
+        p = store.get_project(pid)
+        safe_name = "".join(c for c in p.name if c not in '\\/:*?"<>|').strip() or "project"
+        export_dir = user_data_dir() / "exports" / safe_name
+        export_dir.mkdir(parents=True, exist_ok=True)
+
+        if req.kind in ("graph.json", "nodes.csv", "edges.csv"):
+            g = store.get_graph(pid, req.group_id)
+            if req.kind == "graph.json":
+                content = json.dumps(
+                    {
+                        "schema": "docgraph-graph/v1",
+                        "project_id": pid,
+                        "group_id": req.group_id,
+                        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "stats": {"nodes": len(g["nodes"]), "edges": len(g["edges"])},
+                        "nodes": g["nodes"],
+                        "edges": g["edges"],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            else:
+                if req.kind == "nodes.csv":
+                    rows = [["id", "label", "type", "confidence"]]
+                    rows += [
+                        [n["data"]["id"], n["data"]["label"], n["data"]["type"], n["data"]["confidence"]]
+                        for n in g["nodes"]
+                    ]
+                else:
+                    rows = [["source", "target", "type", "confidence", "evidence"]]
+                    rows += [
+                        [e["data"]["source"], e["data"]["target"], e["data"]["type"], e["data"]["confidence"], ""]
+                        for e in g["edges"]
+                    ]
+                content = "\n".join(",".join(_csv_escape(c) for c in row) for row in rows)
+        elif req.kind in ("png", "svg"):
+            if not req.content_base64:
+                raise HTTPException(status_code=400, detail="png/svg 导出需要前端生成的内容")
+            content = base64.b64decode(req.content_base64)
+        else:
+            raise HTTPException(status_code=400, detail="不支持的导出类型：" + str(req.kind))
+
+        filename = req.filename or ("export." + req.kind)
+        target = export_dir / filename
+        n = 2
+        while target.exists():
+            stem, suffix = target.stem, target.suffix
+            target = export_dir / (stem + " (" + str(n) + ")" + suffix)
+            n += 1
+        if isinstance(content, str):
+            target.write_text(content, encoding="utf-8")
+        else:
+            target.write_bytes(content)
+        return {"path": str(target), "dir": str(export_dir)}
 
     # ---------- 打包模式：内嵌前端静态资源 ----------
 

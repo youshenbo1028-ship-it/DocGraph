@@ -55,8 +55,26 @@ export const api = {
   activateProject: (pid: string) =>
     request("/api/projects/" + pid + "/activate", { method: "POST" }),
 
-  createGroup: (pid: string, name: string) =>
-    request("/api/projects/" + pid + "/groups", json("POST", { name })),
+  createGroup: (pid: string, name: string, preset?: string) =>
+    request("/api/projects/" + pid + "/groups", json("POST", { name, preset })),
+
+  moveDocument: (pid: string, docId: string, groupId: string) =>
+    request(
+      "/api/projects/" + pid + "/documents/" + docId + "/move",
+      json("POST", { group_id: groupId }),
+    ),
+
+  copyDocument: (pid: string, docId: string, groupId: string) =>
+    request(
+      "/api/projects/" + pid + "/documents/" + docId + "/copy",
+      json("POST", { group_id: groupId }),
+    ),
+
+  saveExport: (pid: string, kind: string, filename: string, contentBase64?: string, groupId?: string) =>
+    request(
+      "/api/projects/" + pid + "/export/save",
+      json("POST", { kind, filename, content_base64: contentBase64, group_id: groupId }),
+    ),
 
   importDocument: (pid: string, file: File, groupId?: string) => {
     const fd = new FormData();

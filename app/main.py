@@ -104,6 +104,18 @@ class WindowApi:
         global _move_offset
         _move_offset = None
 
+    def open_folder(self, path: str) -> None:
+        """在资源管理器中打开指定目录/文件所在目录（导出文件定位，FR-601/602）。"""
+        try:
+            import os
+
+            if os.path.isdir(path):
+                os.startfile(path)
+            else:
+                os.startfile(os.path.dirname(path))
+        except Exception:
+            pass
+
 
 def main() -> None:
     global _window

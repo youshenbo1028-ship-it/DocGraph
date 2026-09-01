@@ -25,6 +25,40 @@ DOC_STATUS_FAILED = "failed"  # 失败
 DEFAULT_ENTITY_TYPES = ["概念/方法/理论", "人物", "组织/机构", "论文/文献", "数据集/工具", "事件", "指标"]
 DEFAULT_RELATION_TYPES = ["提出", "基于", "改进", "比较", "引用", "验证", "评价", "应用于", "属于"]
 
+# ---- 法律法规场景预设（FR-310 组级类型表）----
+# 法律文档的语义是规范性（规定/禁止/保护/依据…），与学术关系类型（提出/基于/属于…）本质不同；
+# 用学术表抽法律文档会把「女职工——属于——劳动法」这种无信息量关系硬套出来。
+# 预设表不追求穷尽，只保证语义匹配、可读性通顺（见 prompts.py 防垃圾规则）。
+LEGAL_ENTITY_TYPES = [
+    "法律/法规文件",
+    "机构/组织",
+    "人员/角色",
+    "权利/义务",
+    "行为/事项",
+    "程序/制度",
+    "处罚/责任",
+    "概念/术语",
+]
+LEGAL_RELATION_TYPES = [
+    "规定",
+    "确立",
+    "保护",
+    "禁止",
+    "监督",
+    "实施",
+    "依据",
+    "授权",
+    "处罚",
+    "保障",
+    "适用",
+    "承担",
+]
+
+GROUP_PRESETS: dict[str, tuple[list[str], list[str]]] = {
+    "academic": (DEFAULT_ENTITY_TYPES, DEFAULT_RELATION_TYPES),
+    "legal": (LEGAL_ENTITY_TYPES, LEGAL_RELATION_TYPES),
+}
+
 
 @dataclass
 class Project:
