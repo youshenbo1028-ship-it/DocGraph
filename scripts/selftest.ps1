@@ -13,12 +13,22 @@ $env:UV_CACHE_DIR = Join-Path $root ".uv-cache"
 
 function Step($label) { Write-Host ""; Write-Host "== $label ==" -ForegroundColor Cyan }
 
-Step "1/5 后端测试 (pytest)"
+# 预检：释放 8765 端口与残留进程，避免"新代码未生效"类问题（如 405）
+Step "0/6 预检：释放端口/清理残留进程"
+Get-Process -Name DocGraph -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+$conn = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
+if ($conn) { $conn | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue } }
+Start-Sleep -Seconds 2
+$c = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
+if ($c) { Write-Host "FAIL: 端口 8765 仍被占用" -ForegroundColor Red; exit 1 }
+Write-Host "PASS: 端口 8765 空闲" -ForegroundColor Green
+
+Step "1/6 后端测试 (pytest)"
 & .\.venv\Scripts\python.exe -m pytest tests\ --no-header -q
 if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: pytest" -ForegroundColor Red; exit 1 }
 Write-Host "PASS: pytest" -ForegroundColor Green
 
-Step "2/5 前端类型检查 + 构建"
+Step "2/6 前端类型检查 + 构建"
 Push-Location web
 & node node_modules\typescript\bin\tsc --noEmit
 if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Host "FAIL: tsc" -ForegroundColor Red; exit 1 }
@@ -27,12 +37,12 @@ if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Host "FAIL: vite build" -Foregrou
 Pop-Location
 Write-Host "PASS: 前端构建" -ForegroundColor Green
 
-Step "3/5 种子数据（文档+图谱+证据，隔离目录）"
+Step "3/6 种子数据（文档+图谱+证据，隔离目录）"
 & .\.venv\Scripts\python.exe scripts\seed_test_project.py
 if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: seed" -ForegroundColor Red; exit 1 }
 Write-Host "PASS: seed" -ForegroundColor Green
 
-Step "4/5 启动后端并做 API 冒烟"
+Step "4/6 启动后端并做 API 冒烟"
 $server = Start-Job -ScriptBlock {
     param($r, $data)
     Set-Location $r
@@ -64,7 +74,7 @@ print('API_SMOKE_OK: hubs=', len(graph['nodes']), 'edges=', len(graph['edges']),
     Remove-Job $server -Force -ErrorAction SilentlyContinue
 }
 
-Step "5/5 重新启动后端 + Playwright UI 交互"
+Step "5/6 重新启动后端 + Playwright UI 交互"
 $server = Start-Job -ScriptBlock {
     param($r, $data)
     Set-Location $r

@@ -49,3 +49,17 @@ test("详情：点击节点显示实体信息与原文依据", async ({ page }) 
   const evidence = await page.locator(".ev-item").count();
   expect(evidence).toBeGreaterThan(0);
 });
+test("交互：删除文档（确认后从列表移除）", async ({ page }) => {
+  await page.goto("/?seltest=1");
+  await expect(page.locator(".doc-item").first()).toBeVisible({ timeout: 20000 });
+  const first = page.locator(".doc-item").first();
+  const name = (await first.locator(".doc-name").innerText()).trim();
+  // 接受删除确认对话框
+  page.once("dialog", (d) => d.accept());
+  await first.locator(".doc-del").click();
+  await page.waitForTimeout(1500);
+  // 该文档应从列表移除
+  const names = await page.locator(".doc-name").allInnerTexts();
+  expect(names.map((s) => s.trim())).not.toContain(name);
+});
+
