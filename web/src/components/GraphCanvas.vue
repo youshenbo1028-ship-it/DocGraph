@@ -5,7 +5,7 @@ import cytoscapeSvg from "cytoscape-svg";
 
 cytoscape.use(cytoscapeSvg as any);
 
-const props = defineProps<{ graph: { nodes: any[]; edges: any[] } }>();
+const props = defineProps<{ graph: { nodes: any[]; edges: any[] }; mode?: "pan" | "move" }>();
 const emit = defineEmits<{ (e: "select", sel: { kind: "node" | "edge"; data: any }): void }>();
 
 const container = ref<HTMLDivElement | null>(null);
@@ -91,8 +91,16 @@ onMounted(() => {
       emit("select", null as any);
     }
   });
+  // 供自动化读取视口（平移/缩放），正常使用无副作用
+  (window as any).__docgraph_view = () => ({ pan: cy?.pan(), zoom: cy?.zoom() });
+  cy.autoungrabify(props.mode === "pan"); // 默认平移模式
   render();
 });
+
+watch(
+  () => props.mode,
+  (m) => { cy?.autoungrabify(m === "pan" || !m); }
+);
 
 watch(() => props.graph, () => render(), { deep: true });
 
@@ -141,7 +149,7 @@ onBeforeUnmount(() => { cy?.destroy(); cy = null; });
 <template>
   <div class="graph-wrap">
     <div ref="container" class="graph-canvas" />
-    <div class="graph-hint">🖱 拖拽空白处平移 · 滚轮缩放</div>
+    <div class="graph-hint">{{ props.mode === "move" ? "✋ 拖拽节点可移动 · 空白处平移 · 滚轮缩放" : "🖐 拖拽任意处平移 · 滚轮缩放" }}</div>
     <div class="graph-controls">
       <button class="gc" title="放大" @click="zoomIn">＋</button>
       <button class="gc" title="缩小" @click="zoomOut">−</button>

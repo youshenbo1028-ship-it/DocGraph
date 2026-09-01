@@ -19,6 +19,7 @@ const hasKey = ref(false);
 const search = ref("");
 const typeFilter = ref<string>("");
 const hideIsolated = ref(false);
+const graphMode = ref<"pan" | "move">("pan");
 const canvasRef = ref<InstanceType<typeof GraphCanvas> | null>(null);
 const showSettings = ref(false);
 const showExport = ref(false);
@@ -357,13 +358,15 @@ onMounted(async () => {
         <div class="canvas-toolbar">
           <input v-model="search" class="search" placeholder="搜索实体…" />
           <button v-for="t in nodeTypes" :key="t" class="chip" :class="{ active: typeFilter === t }" @click="typeFilter = typeFilter === t ? '' : t">{{ t }}</button>
+          <button class="mode-btn" :class="{'active': graphMode === 'pan'}" @click="graphMode = 'pan'" title="拖拽任意处平移画布">🖐 平移</button>
+          <button class="mode-btn" :class="{'active': graphMode === 'move'}" @click="graphMode = 'move'" title="拖拽节点以移动其位置（空白仍可平移）">✋ 移动节点</button>
           <label class="iso-toggle" title="仅显示与其他实体有关联的节点">
             <input type="checkbox" v-model="hideIsolated" /> 隐藏孤立节点
           </label>
           <span class="stats">{{ graph.nodes.length }} 节点 · {{ graph.edges.length }} 关系</span>
         </div>
         <div class="graph-area">
-          <GraphCanvas ref="canvasRef" :graph="graph" @select="onSelect" />
+          <GraphCanvas ref="canvasRef" :graph="graph" :mode="graphMode" @select="onSelect" />
           <div v-if="!graph.nodes.length" class="empty-graph">
             <div class="empty-ico">🕸</div>
             <div class="empty-title">图谱为空</div>
@@ -540,6 +543,8 @@ onMounted(async () => {
 .chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 .stats { margin-left: auto; font-size: 12px; color: var(--muted); }
 .iso-toggle { font-size: 12px; color: var(--text-2); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
+.mode-btn { font-size: 11px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer; color: var(--text-2); }
+.mode-btn.active { background: #e6eef8; border-color: #bad2eb; color: #2c5c8a; font-weight: 600; }
 .iso-toggle input { cursor: pointer; }
 
 .graph-area { flex: 1; min-height: 0; position: relative; background: var(--surface); }
