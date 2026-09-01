@@ -86,6 +86,22 @@ CREATE TABLE IF NOT EXISTS user_edits (
     payload_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS llm_trace (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    group_id TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    chunk_id TEXT NOT NULL,
+    model TEXT NOT NULL DEFAULT '',
+    base_url TEXT NOT NULL DEFAULT '',
+    request_json TEXT NOT NULL DEFAULT '{}',
+    response_text TEXT NOT NULL DEFAULT '',
+    raw_response_json TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'ok',
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_llm_trace_project ON llm_trace(project_id, document_id);
 CREATE INDEX IF NOT EXISTS idx_documents_project ON documents(project_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
 CREATE INDEX IF NOT EXISTS idx_relations_source ON relations(source_entity_id);
@@ -389,6 +405,66 @@ class ProjectStore:
             sha256=row["sha256"],
         )
 
+
+    # ---------- LLM 调用轨迹（模型 API 请求/响应日志） ----------
+
+    def save_trace(self, trace: dict) -> None:
+        """保存一次 LLM 调用的请求/响应/耗时记录。"""
+        import time as _t
+
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO llm_trace (id, project_id, group_id, document_id, chunk_id, model, base_url, "
+                "request_json, response_text, raw_response_json, status, latency_ms, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    uuid.uuid4().hex,
+                    trace.get("project_id", ""),
+                    trace.get("group_id", ""),
+                    trace.get("document_id", ""),
+                    trace.get("chunk_id", ""),
+                    trace.get("model", ""),
+                    trace.get("base_url", ""),
+                    json.dumps(trace.get("request", {}), ensure_ascii=False),
+                    trace.get("response", ""),
+                    trace.get("raw_response", ""),
+                    trace.get("status", "ok"),
+                    int(trace.get("latency_ms", 0)),
+                    _now(),
+                ),
+            )
+            self._db.commit()
+
+    def list_traces(self, project_id: str, document_id: str | None = None, limit: int = 100) -> list[dict]:
+        """返回项目的 LLM 调用轨迹（可按文档过滤，倒序）。"""
+        if document_id:
+            rows = self._db.execute(
+                "SELECT * FROM llm_trace WHERE project_id=? AND document_id=? ORDER BY rowid DESC LIMIT ?",
+                (project_id, document_id, limit),
+            ).fetchall()
+        else:
+            rows = self._db.execute(
+                "SELECT * FROM llm_trace WHERE project_id=? ORDER BY rowid DESC LIMIT ?",
+                (project_id, limit),
+            ).fetchall()
+        out = []
+        for r in rows:
+            out.append(
+                {
+                    "id": r["id"],
+                    "document_id": r["document_id"],
+                    "chunk_id": r["chunk_id"],
+                    "model": r["model"],
+                    "base_url": r["base_url"],
+                    "request": json.loads(r["request_json"]),
+                    "response": r["response_text"],
+                    "raw_response": r["raw_response_json"],
+                    "status": r["status"],
+                    "latency_ms": r["latency_ms"],
+                    "created_at": r["created_at"],
+                }
+            )
+        return out
 
     # ---------- 实体 / 关系详情与证据（来源依据） ----------
 

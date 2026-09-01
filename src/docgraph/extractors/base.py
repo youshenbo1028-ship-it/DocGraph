@@ -22,6 +22,14 @@ class ExtractionResult:
     chunk_id: str = ""
     raw: str = ""  # LLM 原始输出（调试/审计）
 
+    # ---- 调用轨迹（供"调用日志"查看请求/响应，FR-3xx DEBUG） ----
+    request: dict = field(default_factory=dict)  # 发送给 LLM 的 messages
+    response: str = ""  # LLM 返回的内容（文本）
+    raw_response: str = ""  # LLM 原始响应（JSON 字符串）
+    base_url: str = ""
+    model: str = ""
+    latency_ms: int = 0
+
 
 _FENCE = chr(96) * 3
 

@@ -92,18 +92,37 @@ async function refreshGraph() {
 
 async function onFileChange(evt: Event) {
   const input = evt.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file || !pid.value) return;
+  const files = Array.from(input.files ?? []);
+  if (!files.length || !pid.value) return;
+  await importFiles(files);
+  input.value = "";
+}
+
+async function onFolderChange(evt: Event) {
+  const input = evt.target as HTMLInputElement;
+  const files = Array.from(input.files ?? []).filter((f) => /.(pdf|docx)$/i.test(f.name));
+  if (!files.length) { toast("info", "所选文件夹中没有 PDF / DOCX 文件"); input.value = ""; return; }
+  await importFiles(files);
+  input.value = "";
+}
+
+async function importFiles(files: File[]) {
+  if (!pid.value) return;
   loading.value = true;
   try {
-    await api.importDocument(pid.value!, file, selectedGroupId.value ?? undefined);
+    let ok = 0, skip = 0;
+    for (const f of files) {
+      try {
+        await api.importDocument(pid.value!, f, selectedGroupId.value ?? undefined);
+        ok++;
+      } catch { skip++; }
+    }
     await loadProject();
-    toast("success", "文档已导入，点击「解析并抽取」生成图谱");
+    toast("success", `已导入 ${ok} 个文档` + (skip ? `（失败/重名跳过 ${skip} 个）` : ""));
   } catch (e: any) {
     toast("error", String(e?.message ?? e));
   } finally {
     loading.value = false;
-    input.value = "";
   }
 }
 async function onExtract() {
@@ -197,6 +216,28 @@ function winMin() { pyweb()?.minimize(); }
 function winMax() { pyweb()?.toggle_maximize(); }
 function winClose() { pyweb()?.close(); }
 
+// ---- 模型 API 调用日志 ----
+const showTraces = ref(false);
+const traces = ref<any[]>([]);
+const tracesLoading = ref(false);
+const expandedTrace = ref<string | null>(null);
+
+async function onShowTraces() {
+  if (!pid.value) return;
+  showTraces.value = true;
+  tracesLoading.value = true;
+  try {
+    traces.value = await api.traces(pid.value);
+  } catch { traces.value = []; }
+  finally { tracesLoading.value = false; }
+}
+function toggleTrace(id: string) {
+  expandedTrace.value = expandedTrace.value === id ? null : id;
+}
+function fmtLatency(ms: number) {
+  return ms >= 1000 ? (ms / 1000).toFixed(2) + "s" : ms + "ms";
+}
+
 const TYPE_COLORS: Record<string, string> = {
   "概念/方法/理论": "#4d7cba", 人物: "#e0890c", "组织/机构": "#d64545", "论文/文献": "#2f9e63",
   "数据集/工具": "#7a5bd6", 事件: "#c9a227", 指标: "#b35a8e",
@@ -225,7 +266,11 @@ onMounted(async () => {
       <div class="toolbar-actions">
         <label class="btn primary">
           <span class="icon">＋</span> 导入文档
-          <input type="file" accept=".pdf,.docx" hidden @change="onFileChange" :disabled="loading" />
+          <input type="file" accept=".pdf,.docx" multiple hidden @change="onFileChange" :disabled="loading" />
+        </label>
+        <label class="btn">
+          <span class="icon">📂</span> 导入文件夹
+          <input type="file" webkitdirectory hidden @change="onFolderChange" :disabled="loading" />
         </label>
         <button class="btn accent" :disabled="loading" @click="onExtract">
           <span class="icon" v-if="!loading">⚡</span>
@@ -242,6 +287,7 @@ onMounted(async () => {
             <button @click="onExport('csv')">导出 CSV（节点+边）</button>
           </div>
         </div>
+        <button class="btn ghost" @click="onShowTraces">调用日志</button>
       </div>
       <span class="spacer" />
       <button class="icon-btn" title="设置 (API 配置)" @click="showSettings = !showSettings">⚙︎</button>
@@ -354,6 +400,37 @@ onMounted(async () => {
         <div v-else class="empty-mini">点击图中的<span class="hlb">实体</span>或<span class="hlb">关系线</span><br />查看来源与原文依据</div>
       </aside>
     </main>
+
+    <!-- 调用日志 Modal（模型 API 请求 / 响应） -->
+    <div v-if="showTraces" class="trace-modal" @click.self="showTraces = false">
+      <div class="trace-card">
+        <div class="trace-head">
+          <strong>模型 API 调用日志</strong>
+          <span class="trace-count">{{ traces.length }} 条</span>
+          <button class="icon-btn sm" @click="showTraces = false">✕</button>
+        </div>
+        <div class="trace-body">
+          <div v-if="tracesLoading" class="trace-empty">加载中…</div>
+          <div v-else-if="!traces.length" class="trace-empty">暂无调用记录（执行「解析并抽取」后查看）</div>
+          <div v-for="tr in traces" :key="tr.id" class="trace-item" @click="toggleTrace(tr.id)">
+            <div class="trace-row">
+              <span class="trace-doc">{{ tr.model }}</span>
+              <span class="trace-latency">{{ fmtLatency(tr.latency_ms) }}</span>
+              <span class="trace-status">{{ tr.status }}</span>
+              <span class="trace-time">{{ new Date(tr.created_at).toLocaleTimeString() }}</span>
+            </div>
+            <div v-if="expandedTrace === tr.id" class="trace-detail">
+              <div class="td-label">请求（发送给模型）</div>
+              <pre class="td-json">{{ JSON.stringify(tr.request, null, 2) }}</pre>
+              <div class="td-label">响应（模型返回）</div>
+              <pre class="td-json">{{ tr.response }}</pre>
+              <div v-if="tr.raw_response" class="td-label">原始响应</div>
+              <pre v-if="tr.raw_response" class="td-json">{{ tr.raw_response }}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- Toast -->
     <div class="toasts">
@@ -479,4 +556,24 @@ onMounted(async () => {
 .toast-error { background: var(--error); }
 .toast-info { background: var(--primary); }
 @keyframes slidein { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }
+/* 调用日志 Modal */
+.trace-modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 90; }
+.trace-card { width: 780px; max-width: 92vw; height: 80vh; background: var(--surface); border-radius: 12px; box-shadow: var(--shadow-lg); display: flex; flex-direction: column; overflow: hidden; }
+.trace-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.trace-head strong { font-size: 15px; }
+.trace-count { color: var(--muted); font-size: 12px; }
+.trace-head .icon-btn { margin-left: auto; }
+.trace-body { flex: 1; overflow-y: auto; padding: 10px 14px; }
+.trace-empty { color: var(--muted); text-align: center; padding: 30px; }
+.trace-item { border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 8px; cursor: pointer; overflow: hidden; }
+.trace-item:hover { border-color: var(--border-strong); }
+.trace-row { display: flex; align-items: center; gap: 12px; padding: 8px 12px; font-size: 12px; }
+.trace-doc { font-weight: 600; }
+.trace-latency { color: var(--primary-600); }
+.trace-status { color: var(--success); }
+.trace-time { margin-left: auto; color: var(--muted); }
+.trace-detail { border-top: 1px solid var(--border); padding: 10px 12px; background: var(--surface-2); }
+.td-label { font-size: 11px; color: var(--muted); margin: 6px 0 3px; font-weight: 600; }
+.td-json { margin: 0; padding: 8px; background: #0f172a; color: #d5e6ff; border-radius: 6px; font-size: 11px; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+
 </style>

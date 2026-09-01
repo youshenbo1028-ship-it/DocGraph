@@ -27,6 +27,7 @@ class OpenAICompatibleExtractor(Extractor):
     ) -> None:
         # 为响应与连接设置合理超时，避免某次调用挂起数分钟（默认 600s）
         self._client = OpenAI(base_url=base_url, api_key=api_key, timeout=90.0, max_retries=1)
+        self._base_url = base_url
         self._model = model
         self._temperature = temperature
         self._max_retries = max_retries
@@ -40,21 +41,37 @@ class OpenAICompatibleExtractor(Extractor):
         # TODO(M1+): 类型表按分组加载（FR-310）；当前用默认类型表
         system = build_system_prompt(DEFAULT_ENTITY_TYPES, DEFAULT_RELATION_TYPES, known_entities)
         user = build_user_prompt(chunk_text)
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
 
         last_error: Exception | None = None
         for _ in range(self._max_retries + 1):
             try:
+                import time
+
+                t0 = time.time()
                 resp = self._client.chat.completions.create(
                     model=self._model,
                     temperature=self._temperature,
                     response_format={"type": "json_object"},
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
+                    messages=messages,
                 )
+                latency = int((time.time() - t0) * 1000)
                 raw = (resp.choices[0].message.content or "").strip()
-                return parse_extraction_result(raw, chunk_id=chunk_id)
+                result = parse_extraction_result(raw, chunk_id=chunk_id)
+                # 记录调用轨迹（请求/响应/耗时）
+                result.request = {"messages": messages}
+                result.response = raw
+                try:
+                    result.raw_response = resp.model_dump_json()
+                except Exception:
+                    result.raw_response = str(resp)
+                result.base_url = self._base_url
+                result.model = self._model
+                result.latency_ms = latency
+                return result
             except ExtractionError as exc:
                 last_error = exc  # 输出格式问题 -> 重试
             except Exception as exc:  # 网络/API 错误 -> 直接抛出

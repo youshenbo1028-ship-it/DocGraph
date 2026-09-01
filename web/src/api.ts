@@ -94,6 +94,12 @@ export const api = {
   relationDetail: (pid: string, rid: string) =>
     request("/api/projects/" + pid + "/relations/" + rid),
 
+  traces: (pid: string, documentId?: string) =>
+    request(
+      "/api/projects/" + pid + "/traces" +
+        (documentId ? "?document_id=" + encodeURIComponent(documentId) : ""),
+    ),
+
   downloadExport: (pid: string, kind: "nodes.csv" | "edges.csv" | "graph.json", groupId?: string) =>
     downloadFromApi(
       "/api/projects/" + pid + "/export/" + kind +

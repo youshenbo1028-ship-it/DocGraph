@@ -359,6 +359,13 @@ def create_app() -> FastAPI:
         store = registry.open(pid)
         return store.get_graph(pid, group_id)
 
+    # ---------- 模型 API 调用轨迹（请求/响应日志） ----------
+
+    @app.get("/api/projects/{pid}/traces")
+    def list_traces(pid: str, document_id: str | None = None, limit: int = 100) -> list[dict]:
+        store = registry.open(pid)
+        return store.list_traces(pid, document_id, limit)
+
     # ---------- 实体/关系详情与证据（来源依据，FR-307） ----------
 
     @app.get("/api/projects/{pid}/entities/{eid}")

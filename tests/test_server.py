@@ -270,6 +270,18 @@ def test_entity_and_relation_detail_evidence(client):
     assert rd["source"] and rd["target"] and rd["type"]
     assert rd["evidence"]  # 关系证据（原文摘录）
 
+def test_traces_endpoint(client):
+    """模型 API 调用轨迹接口：返回请求/响应/耗时记录。"""
+    pid, gid = _make_project_with_graph(client)
+    r = client.get(f"/api/projects/{pid}/traces")
+    assert r.status_code == 200, r.text
+    traces = r.json()
+    assert len(traces) >= 1
+    assert "request" in traces[0]
+    assert "response" in traces[0]
+    assert "latency_ms" in traces[0]
+    assert "model" in traces[0]
+
 def test_extract_requires_api_config(client):
     pid = client.post("/api/projects", json={"name": "t"}).json()["project"]["id"]
     r = client.post(

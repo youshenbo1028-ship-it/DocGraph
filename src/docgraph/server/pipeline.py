@@ -74,6 +74,20 @@ def extract_group(
                     result = fut.result()  # 某个块失败则抛出，交由外层标记失败
                     candidates.extend(result.entities)
                     relations.extend(result.relations)
+                    # 记录这次 LLM 调用的请求/响应/耗时（模型 API 调用日志）
+                    store.save_trace({
+                        "project_id": project_id,
+                        "group_id": group_id,
+                        "document_id": doc.id,
+                        "chunk_id": result.chunk_id,
+                        "model": result.model,
+                        "base_url": result.base_url,
+                        "request": result.request,
+                        "response": result.response,
+                        "raw_response": result.raw_response,
+                        "status": "ok",
+                        "latency_ms": result.latency_ms,
+                    })
             merged = merge_entities(candidates, relations)
             store.save_extraction(doc.id, merged.entities, merged.relations)
             store.set_document_status(doc.id, DOC_STATUS_EXTRACTED)

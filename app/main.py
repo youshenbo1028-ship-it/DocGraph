@@ -17,6 +17,8 @@ FRONTEND_DEV_URL = "http://127.0.0.1:5173"
 
 # 模块级窗口引用：pywebview 不会自动注入 self.window 到 js_api 实例
 _window: "webview.Window | None" = None
+# 自跟踪最大化状态：pywebview 的 window.maximized 属性在部分版本/无边框窗口下不可靠
+_maximized = False
 
 
 def _start_server() -> None:
@@ -43,11 +45,15 @@ class WindowApi:
             _window.minimize()
 
     def toggle_maximize(self) -> None:
-        if _window is not None:
-            if _window.maximized:
-                _window.restore()
-            else:
-                _window.maximize()
+        global _maximized
+        if _window is None:
+            return
+        if _maximized:
+            _window.restore()
+            _maximized = False
+        else:
+            _window.maximize()
+            _maximized = True
 
     def close(self) -> None:
         if _window is not None:
