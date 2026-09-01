@@ -80,18 +80,32 @@ onMounted(() => {
       {
         selector: "edge",
         style: {
-          width: 2,
-          "line-color": "#b9c2cf",
-          "line-curvature": 0.08,
-          "target-arrow-color": "#9aa6b5",
+          width: 1.5,
+          "line-color": "#c6cfda",
+          "line-opacity": 0.5,
+          "line-curvature": 0.05,
+          "target-arrow-color": "#a9b5c3",
           "target-arrow-shape": "triangle",
-          "target-arrow-width": 6,
+          "target-arrow-width": 5,
+          "target-arrow-opacity": 0.7,
           "curve-style": "bezier",
-          label: "data(label)",
-          "font-size": 10,
-          color: "#7a8695",
-          "text-rotation": "autorotate",
+          // 默认不显示边标签：边多了全是噪音；点击选中后显示
+          label: "",
           "overlay-opacity": 0,
+        },
+      },
+      {
+        selector: "edge:selected",
+        style: {
+          label: "data(label)",
+          "line-opacity": 1,
+          "line-color": "#3f6cb5",
+          width: 2.5,
+          "font-size": 10,
+          color: "#33404f",
+          "text-outline-width": 3,
+          "text-outline-color": "#ffffff",
+          "text-rotation": "autorotate",
         },
       },
       {
@@ -135,6 +149,9 @@ watch(
 
 watch(() => props.graph, () => render(), { deep: true });
 
+// 初始视角：布局完成后居中最大度数节点，缩放保持可读（≥READABLE_ZOOM），
+// 避免 200+ 节点整体 fit 后标签缩成 3-4px 看不清（真实用户反馈）。
+const READABLE_ZOOM = 0.75;
 function render() {
   if (!cy) return;
   cy.elements().remove();
@@ -143,7 +160,19 @@ function render() {
   const opts = fcoseOptions();
   // 大图降档保流畅（≤250 用 default 迭代充分、交叉更少）
   if (props.graph.nodes.length > 250) opts.quality = "fast";
-  cy.layout(opts).run();
+  const layout = cy.layout(opts);
+  layout.one("layoutstop", () => {
+    const nodes = cy?.nodes();
+    if (!cy || !nodes || !nodes.length) return;
+    // 选度数最高的节点作为初始焦点（hub 即图的"入口"）
+    let hub = nodes[0];
+    nodes.forEach((n) => { if (n.degree() > hub.degree()) hub = n; });
+    try {
+      cy.zoom(Math.min(READABLE_ZOOM, cy.maxZoom()));
+      cy.center(hub);
+    } catch { /* 忽略视口异常 */ }
+  });
+  layout.run();
 }
 
 function _select(node: any) {
