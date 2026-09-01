@@ -238,7 +238,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health")
     def health() -> dict:
-        return {"status": "ok", "version": "0.1.0"}
+        return {"status": "ok", "version": app.version}
 
     @app.get("/api/projects")
     def list_projects() -> list[dict]:
