@@ -68,6 +68,9 @@ export const api = {
   parseDocument: (pid: string, docId: string) =>
     request("/api/projects/" + pid + "/documents/" + docId + "/parse", { method: "POST" }),
 
+  deleteDocument: (pid: string, docId: string) =>
+    request("/api/projects/" + pid + "/documents/" + docId, { method: "DELETE" }),
+
   extract: (pid: string, groupId: string | null, apiCfg: ApiConfig) =>
     request(
       "/api/projects/" + pid + "/extract",

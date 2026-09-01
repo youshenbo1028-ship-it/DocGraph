@@ -327,6 +327,16 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail=f"解析失败：{exc}") from exc
         return _document_payload(store.get_document(doc_id))
 
+    @app.delete("/api/projects/{pid}/documents/{doc_id}")
+    def delete_document_route(pid: str, doc_id: str) -> dict:
+        store = registry.open(pid)
+        doc = store.get_document(doc_id)
+        if doc is None or doc.project_id != pid:
+            raise HTTPException(status_code=404, detail="文档不存在")
+        file_name = Path(doc.path).name
+        store.delete_document(doc_id)  # 级联删除分块/证据，并清理实体/关系来源（FR-105）
+        return {"deleted": doc_id, "file_name": file_name}
+
     @app.post("/api/projects/{pid}/extract")
     def run_extract(pid: str, req: ExtractRequest) -> dict:
         store = registry.open(pid)

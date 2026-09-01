@@ -100,6 +100,18 @@ async function refreshGraph() {
   fullGraph.value = await api.getGraph(pid.value, selectedGroupId.value ?? undefined);
 }
 
+async function onDeleteDoc(d: any) {
+  if (!pid.value) return;
+  if (!confirm(`确定删除文档「${d.file_name}」？其抽取的实体与关系也会一并移除。`)) return;
+  try {
+    await api.deleteDocument(pid.value, d.id);
+    await loadProject();
+    toast("success", "已删除文档：" + d.file_name);
+  } catch (e: any) {
+    toast("error", String(e?.message ?? e));
+  }
+}
+
 async function onFileChange(evt: Event) {
   const input = evt.target as HTMLInputElement;
   const files = Array.from(input.files ?? []);
@@ -350,6 +362,7 @@ onMounted(async () => {
         <div v-for="d in documents" :key="d.id" class="doc-item">
           <span class="doc-name" :title="d.file_name">{{ d.file_name }}</span>
           <span class="pill" :class="'pill-' + d.status">{{ STATUS_LABEL[d.status] ?? d.status }}</span>
+          <button class="doc-del" title="删除该文档（含其抽取结果）" @click="onDeleteDoc(d)">✕</button>
         </div>
       </aside>
 
@@ -525,6 +538,8 @@ onMounted(async () => {
 
 .doc-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 8px; margin-bottom: 4px; border-radius: var(--radius-sm); background: var(--surface-2); }
 .doc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.doc-del { border: none; background: transparent; color: #b7c0cd; cursor: pointer; font-size: 12px; line-height: 1; padding: 2px 5px; border-radius: 4px; flex-shrink: 0; }
+.doc-del:hover { color: #d64545; background: #fbeaea; }
 .pill { font-size: 10px; padding: 2px 7px; border-radius: 8px; white-space: nowrap; }
 .pill-pending { background: #eef0f4; color: var(--muted); }
 .pill-parsed { background: var(--success-100); color: var(--success); }

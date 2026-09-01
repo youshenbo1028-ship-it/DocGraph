@@ -282,6 +282,21 @@ def test_traces_endpoint(client):
     assert "latency_ms" in traces[0]
     assert "model" in traces[0]
 
+def test_delete_document_route(client):
+    """删除文档（FR-105）：文档与来源实体/关系清理。"""
+    pid, gid = _make_project_with_graph(client)
+    doc = client.get(f"/api/projects/{pid}").json()["documents"][0]
+    # 删除前有图谱
+    graph = client.get(f"/api/projects/{pid}/graph", params={"group_id": gid}).json()
+    assert len(graph["nodes"]) >= 2
+    r = client.delete(f"/api/projects/{pid}/documents/{doc['id']}")
+    assert r.status_code == 200
+    # 删除后：文档消失，且无文档的来源实体/关系被清理（无剩余节点）
+    docs = client.get(f"/api/projects/{pid}").json()["documents"]
+    assert all(d["id"] != doc["id"] for d in docs)
+    graph2 = client.get(f"/api/projects/{pid}/graph", params={"group_id": gid}).json()
+    assert graph2["nodes"] == []  # 实体随文档消失（FR-105）
+
 def test_extract_requires_api_config(client):
     pid = client.post("/api/projects", json={"name": "t"}).json()["project"]["id"]
     r = client.post(
