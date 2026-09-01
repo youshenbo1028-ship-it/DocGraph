@@ -238,11 +238,27 @@ function winMin() { pyweb()?.minimize(); }
 function winMax() { pyweb()?.toggle_maximize(); }
 function winClose() { pyweb()?.close(); }
 
-// 工具栏自定义窗口拖拽（Windows frameless：pywebview 不实现 app-region 拖拽区）
+// 工具栏自定义窗口拖拽（Windows frameless：pywebview 不实现拖拽区，用 SetWindowPos 程序化移动）
+let winDragging = false;
+let winDragTimer = 0;
 function onToolbarMousedown(e: MouseEvent) {
   const t = e.target as HTMLElement;
   if (t.closest("button, input, label, select, .dropdown-wrap, .settings-pop, .win-btn, .icon-btn")) return;
-  if (e.button === 0) pyweb()?.start_drag();
+  if (e.button !== 0) return;
+  winDragging = true;
+  pyweb()?.start_move();
+  const loop = () => {
+    if (!winDragging) return;
+    pyweb()?.move_window();
+    winDragTimer = window.setTimeout(loop, 16); // ~60fps 跟随光标
+  };
+  winDragTimer = window.setTimeout(loop, 16);
+}
+function onDocMouseUp() {
+  if (!winDragging) return;
+  winDragging = false;
+  clearTimeout(winDragTimer);
+  pyweb()?.end_move();
 }
 
 // ---- 模型 API 调用日志 ----
@@ -274,6 +290,7 @@ const TYPE_COLORS: Record<string, string> = {
 function detailColor(type: string) { return TYPE_COLORS[type] ?? "#8a94a6"; }
 
 onMounted(async () => {
+  window.addEventListener("mouseup", onDocMouseUp);
   try { await loadSettings(); await ensureProject(); toast("success", "项目已就绪"); }
   catch (e: any) { toast("error", String(e?.message ?? e)); }
   // 自测钩子（仅测试使用，正常使用无副作用）

@@ -12,9 +12,6 @@ import threading
 
 import webview
 
-# Win32 常量：让 Windows 发起原生窗口拖动（frameless 自定义拖拽区）
-_WM_NCLBUTTONDOWN = 0x00A1
-_HTCAPTION = 2
 
 API_HOST = "127.0.0.1"
 API_PORT = 8765
@@ -24,6 +21,11 @@ FRONTEND_DEV_URL = "http://127.0.0.1:5173"
 _window: "webview.Window | None" = None
 # 自跟踪最大化状态：pywebview 的 window.maximized 属性在部分版本/无边框窗口下不可靠
 _maximized = False
+# 自定义窗口拖动状态：记录按下时 光标相对窗口左上角 的偏移 (dx, dy)
+_move_offset: "tuple[int, int] | None" = None
+
+_SWP_NOSIZE = 0x0001
+_SWP_NOZORDER = 0x0004
 
 
 def _start_server() -> None:
@@ -64,22 +66,43 @@ class WindowApi:
         if _window is not None:
             _window.destroy()
 
-    def start_drag(self) -> None:
-        """发起原生窗口拖动（工具栏自定义拖拽区，Windows frameless 用）。
-
-        说明: pywebview 在 Windows(winforms+edgechromium) 未实现 easy_drag 与
-        -webkit-app-region 拖拽区，因此用 Win32 ReleaseCapture + SendMessage(HTCAPTION)
-        让系统接管鼠标拖动窗口。画布/节点走正常鼠标事件，不受影响。
-        """
+    def start_move(self) -> None:
+        """开始自定义窗口拖动：记录光标相对窗口左上角的偏移。"""
+        global _move_offset
         if _window is None:
             return
         try:
             hwnd = int(_window.native.Handle.ToInt32())
-        except (AttributeError, TypeError, ValueError):
+            pt = ctypes.wintypes.POINT()
+            ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+            r = ctypes.wintypes.RECT()
+            ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(r))
+            _move_offset = (pt.x - r.left, pt.y - r.top)
+        except Exception:
+            _move_offset = None
+
+    def move_window(self) -> None:
+        """按当前光标位置移动窗口（保持按下时的相对偏移，跟随光标）。"""
+        global _move_offset
+        if _window is None or _move_offset is None:
             return
-        user32 = ctypes.windll.user32
-        user32.ReleaseCapture()
-        user32.SendMessageW(hwnd, _WM_NCLBUTTONDOWN, _HTCAPTION, 0)
+        try:
+            hwnd = int(_window.native.Handle.ToInt32())
+            pt = ctypes.wintypes.POINT()
+            ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+            ctypes.windll.user32.SetWindowPos(
+                hwnd, 0,
+                pt.x - _move_offset[0],
+                pt.y - _move_offset[1],
+                0, 0, _SWP_NOSIZE | _SWP_NOZORDER,
+            )
+        except Exception:
+            pass
+
+    def end_move(self) -> None:
+        """结束自定义窗口拖动。"""
+        global _move_offset
+        _move_offset = None
 
 
 def main() -> None:
