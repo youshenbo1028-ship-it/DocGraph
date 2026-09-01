@@ -75,6 +75,10 @@ onMounted(() => {
       },
     ],
     layout: { name: "cose", animate: false },
+    // 交互：拖拽空白平移、滚轮缩放（显式开启，确保可用）
+    userPanningEnabled: true,
+    userZoomingEnabled: true,
+    boxSelectionEnabled: false,
   });
   cy.on("tap", "node", (evt) => _select(evt.target));
   cy.on("tap", "edge", (evt) => {
@@ -113,6 +117,16 @@ function selectFirstNode() {
   if (first && first.length) _select(first);
 }
 
+function zoomIn() {
+  if (cy) cy.zoom({ level: cy.zoom() * 1.2 });
+}
+function zoomOut() {
+  if (cy) cy.zoom({ level: cy.zoom() / 1.2 });
+}
+function fit() {
+  if (cy) cy.fit(undefined, 40);
+}
+
 function exportPng(): string | null {
   return cy ? cy.png({ full: true, scale: 2 }) : null;
 }
@@ -125,10 +139,23 @@ onBeforeUnmount(() => { cy?.destroy(); cy = null; });
 </script>
 
 <template>
-  <div ref="container" class="graph-canvas" />
+  <div class="graph-wrap">
+    <div ref="container" class="graph-canvas" />
+    <div class="graph-hint">🖱 拖拽空白处平移 · 滚轮缩放</div>
+    <div class="graph-controls">
+      <button class="gc" title="放大" @click="zoomIn">＋</button>
+      <button class="gc" title="缩小" @click="zoomOut">−</button>
+      <button class="gc" title="适应视图" @click="fit">⤢</button>
+    </div>
+  </div>
 </template>
 
 <style scoped>
+.graph-wrap {
+  position: relative;
+  height: 100%;
+  width: 100%;
+}
 .graph-canvas {
   height: 100%;
   width: 100%;
@@ -136,5 +163,41 @@ onBeforeUnmount(() => { cy?.destroy(); cy = null; });
   background-color: #ffffff;
   background-image: radial-gradient(#e2e6ed 1px, transparent 1px);
   background-size: 22px 22px;
+}
+.graph-hint {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: #9aa6b5;
+  background: rgba(255, 255, 255, .85);
+  padding: 4px 12px;
+  border-radius: 14px;
+  border: 1px solid #e2e6ed;
+  pointer-events: none;
+  user-select: none;
+}
+.graph-controls {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.gc {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #d4d9e2;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 15px;
+  color: #52606d;
+  box-shadow: 0 1px 2px rgba(16,24,40,.06);
+}
+.gc:hover {
+  border-color: #b7c0cd;
 }
 </style>

@@ -18,6 +18,7 @@ const loading = ref(false);
 const hasKey = ref(false);
 const search = ref("");
 const typeFilter = ref<string>("");
+const hideIsolated = ref(false);
 const canvasRef = ref<InstanceType<typeof GraphCanvas> | null>(null);
 const showSettings = ref(false);
 const showExport = ref(false);
@@ -45,7 +46,15 @@ const graph = computed(() => {
     return true;
   });
   const ids = new Set(nodes.map((n) => n.data.id));
-  const edges = fullGraph.value.edges.filter((e) => ids.has(e.data.source) && ids.has(e.data.target));
+  let edges = fullGraph.value.edges.filter((e) => ids.has(e.data.source) && ids.has(e.data.target));
+  // 隐藏孤立节点：仅保留出现在边中的节点
+  if (hideIsolated.value) {
+    const connected = new Set(edges.flatMap((e) => [e.data.source, e.data.target]));
+    const kept = nodes.filter((n) => connected.has(n.data.id));
+    const keptIds = new Set(kept.map((n) => n.data.id));
+    edges = edges.filter((e) => keptIds.has(e.data.source) && keptIds.has(e.data.target));
+    return { nodes: kept, edges };
+  }
   return { nodes, edges };
 });
 const nodeTypes = computed(() => Array.from(new Set(fullGraph.value.nodes.map((n) => n.data.type || "未知"))));
@@ -348,6 +357,9 @@ onMounted(async () => {
         <div class="canvas-toolbar">
           <input v-model="search" class="search" placeholder="搜索实体…" />
           <button v-for="t in nodeTypes" :key="t" class="chip" :class="{ active: typeFilter === t }" @click="typeFilter = typeFilter === t ? '' : t">{{ t }}</button>
+          <label class="iso-toggle" title="仅显示与其他实体有关联的节点">
+            <input type="checkbox" v-model="hideIsolated" /> 隐藏孤立节点
+          </label>
           <span class="stats">{{ graph.nodes.length }} 节点 · {{ graph.edges.length }} 关系</span>
         </div>
         <div class="graph-area">
@@ -527,6 +539,8 @@ onMounted(async () => {
 .chip:hover { border-color: var(--border-strong); }
 .chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 .stats { margin-left: auto; font-size: 12px; color: var(--muted); }
+.iso-toggle { font-size: 12px; color: var(--text-2); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; user-select: none; }
+.iso-toggle input { cursor: pointer; }
 
 .graph-area { flex: 1; min-height: 0; position: relative; background: var(--surface); }
 .empty-graph { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; color: var(--muted); pointer-events: none; }
