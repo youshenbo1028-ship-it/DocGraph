@@ -71,7 +71,7 @@ def main() -> None:
         height=900,
         min_size=(1080, 700),
         frameless=True,
-        easy_drag=False,  # 关键：否则整窗都可拖拽，画布/节点无法正常交互
+        easy_drag=True,  # 整窗默认可拖；配合前端内容区 no-drag 保交互
         js_api=WindowApi(),
     )
     webview.start()
