@@ -62,5 +62,7 @@ src/docgraph/core/store.py 重构为双后端：
 
 ## 5. 环境备注（本机）
 
-- Docker Hub 直连超时 -> daemon.json 配置镜像加速 https://docker.m.daocloud.io；
+- Docker Hub 直连超时 -> daemon.json 配置镜像加速 https://docker.m.daocloud.io + https://docker.1ms.run；
+- 本环境 auth.docker.io 被网络拦截：postgres 镜像已成功拉取，neo4j/weaviate 拉取失败（镜像源无法代理认证）；
+  待网络允许时执行 docker compose up -d 即可补齐（compose 已就绪）；
 - Docker Desktop 起不来时：wsl --shutdown 后重启 Docker Desktop。

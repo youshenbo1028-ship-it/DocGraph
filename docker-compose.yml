@@ -11,6 +11,7 @@ services:
       POSTGRES_DB: docgraph_meta
     ports:
       - "5432:5432"
+    restart: unless-stopped
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -28,6 +29,7 @@ services:
     ports:
       - "7474:7474"   # HTTP 控制台
       - "7687:7687"   # Bolt 驱动端口
+    restart: unless-stopped
     volumes:
       - neo4jdata:/data
     healthcheck:
@@ -46,6 +48,7 @@ services:
       CLUSTER_HOSTNAME: "docgraph-weaviate"
     ports:
       - "8080:8080"
+    restart: unless-stopped
     volumes:
       - weaviatedata:/var/lib/weaviate
     healthcheck:
