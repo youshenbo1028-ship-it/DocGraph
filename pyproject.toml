@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docgraph"
-version = "0.6.0"
+version = "0.6.1"
 description = "本地文档知识图谱工具：拖入 PDF/Word，LLM 抽取实体与关系，一键生成可交互知识图谱（单文件 exe）"
 readme = "README.md"
 requires-python = ">=3.10"

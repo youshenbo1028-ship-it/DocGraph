@@ -29,6 +29,13 @@ const newGroupPreset = ref<"academic" | "legal">("academic");
 const copyDoc = ref<any | null>(null);      // 正在选择「复制到哪个分组」的文档
 const dragDocId = ref<string | null>(null); // 正在拖拽的文档
 const dragOverGroup = ref<string | null>(null);
+// 画布最大化：左右面板可折叠（记住用户偏好）
+const showLeft = ref(localStorage.getItem("docgraph_panel_left") !== "0");
+const showRight = ref(localStorage.getItem("docgraph_panel_right") !== "0");
+function togglePanel(side: "left" | "right") {
+  if (side === "left") { showLeft.value = !showLeft.value; localStorage.setItem("docgraph_panel_left", showLeft.value ? "1" : "0"); }
+  else { showRight.value = !showRight.value; localStorage.setItem("docgraph_panel_right", showRight.value ? "1" : "0"); }
+}
 
 const apiCfg = ref<ApiConfig>({ base_url: "https://api.deepseek.com/v1", api_key: "", model: "deepseek-chat" });
 
@@ -317,24 +324,27 @@ async function onExport(kind: "png" | "svg" | "json" | "csv") {
 
 const STATUS_LABEL: Record<string, string> = { pending: "待处理", parsing: "解析中", parsed: "已解析", extracting: "抽取中", extracted: "已抽取", failed: "失败" };
 
-// 窗口控制（打包模式经 window.pywebview.api 调用；浏览器开发模式优雅降级）
+// 窗口控制：仅在便携 exe（pywebview frameless）中显示；网页服务版无窗口概念
+const inWebview = ref(false);
 const pyweb = () => (window as any).pywebview?.api;
 function winMin() { pyweb()?.minimize(); }
 function winMax() { pyweb()?.toggle_maximize(); }
 function winClose() { pyweb()?.close(); }
 
-// 工具栏自定义窗口拖拽（Windows frameless：pywebview 不实现拖拽区，用 SetWindowPos 程序化移动）
+// 工具栏拖拽移动窗口（仅 pywebview 环境生效）
 let winDragging = false;
 let winDragTimer = 0;
 function onToolbarMousedown(e: MouseEvent) {
   const t = e.target as HTMLElement;
-  if (t.closest("button, input, label, select, .dropdown-wrap, .settings-pop, .win-btn, .icon-btn")) return;
+  if (t.closest("button, input, label, select, .dropdown-wrap, .settings-pop, .icon-btn")) return;
   if (e.button !== 0) return;
+  const api_ = (window as any).pywebview?.api;
+  if (!api_?.start_move) return; // 浏览器模式不启用窗口拖拽
   winDragging = true;
-  pyweb()?.start_move();
+  api_.start_move();
   const loop = () => {
     if (!winDragging) return;
-    pyweb()?.move_window();
+    api_?.move_window();
     winDragTimer = window.setTimeout(loop, 16); // ~60fps 跟随光标
   };
   winDragTimer = window.setTimeout(loop, 16);
@@ -343,7 +353,7 @@ function onDocMouseUp() {
   if (!winDragging) return;
   winDragging = false;
   clearTimeout(winDragTimer);
-  pyweb()?.end_move();
+  (window as any).pywebview?.api?.end_move();
 }
 
 // ---- 模型 API 调用日志 ----
@@ -376,6 +386,7 @@ function detailColor(type: string) { return TYPE_COLORS[type] ?? "#8a94a6"; }
 
 onMounted(async () => {
   window.addEventListener("mouseup", onDocMouseUp);
+  inWebview.value = !!pyweb(); // 便携 exe 环境：显示窗口控制按钮
   try { await loadSettings(); await ensureProject(); toast("success", "项目已就绪"); }
   catch (e: any) { toast("error", String(e?.message ?? e)); }
   // 自测钩子（仅测试使用，正常使用无副作用）
@@ -422,7 +433,7 @@ onMounted(async () => {
       </div>
       <span class="spacer" />
       <button class="icon-btn" title="设置 (API 配置)" @click="showSettings = !showSettings">⚙︎</button>
-      <div class="win-controls">
+      <div v-if="inWebview" class="win-controls">
         <button class="win-btn" title="最小化" @click="winMin">─</button>
         <button class="win-btn" title="最大化 / 还原" @click="winMax">▢</button>
         <button class="win-btn close" title="关闭" @click="winClose">✕</button>
@@ -453,8 +464,11 @@ onMounted(async () => {
     <!-- 主区域 -->
     <main class="layout">
       <!-- 左：分组 + 文档（全部文件 = 所有文档；拖文档到分组 = 移动；⧉ = 复制） -->
-      <aside class="panel left">
-        <div class="sec-head">分组与文档</div>
+      <button v-if="!showLeft" class="panel-toggle left-toggle" title="展开文件面板" @click="togglePanel('left')">▸</button>
+      <aside v-if="showLeft" class="panel left">
+        <div class="sec-head">分组与文档
+          <button class="collapse-btn" title="收起面板，放大画布" @click="togglePanel('left')">◀ 收起</button>
+        </div>
         <button class="group-item" :class="{ active: !selectedGroupId }" @click="selectGroup('')">
           <span class="gicon">🗂</span> 全部文件 <span class="gcount">{{ documents.length }}</span>
         </button>
@@ -538,8 +552,11 @@ onMounted(async () => {
       </section>
 
       <!-- 右：详情 -->
-      <aside class="panel right">
-        <div class="sec-head">详情</div>
+      <button v-if="!showRight" class="panel-toggle right-toggle" title="展开详情面板" @click="togglePanel('right')">◂</button>
+      <aside v-if="showRight" class="panel right">
+        <div class="sec-head">详情
+          <button class="collapse-btn" title="收起面板，放大画布" @click="togglePanel('right')">▶ 收起</button>
+        </div>
         <template v-if="selected && detail">
           <template v-if="selected.kind === 'node'">
             <div class="detail-head">
@@ -625,10 +642,19 @@ onMounted(async () => {
 /* 无边框窗口：工具栏由 JS 触发原生窗口拖动（start_drag），交互元素不触发 */
 .toolbar { user-select: none; cursor: default; }
 .toolbar .btn, .toolbar .icon-btn, .toolbar input, .toolbar .dropdown-wrap, .toolbar .win-btn, .toolbar .settings-pop { -webkit-app-region: no-drag; }
+/* 便携 exe 窗口控制（仅 pywebview 环境显示） */
 .win-controls { display: flex; align-items: center; gap: 2px; margin-left: 6px; }
 .win-btn { display: flex; align-items: center; justify-content: center; width: 34px; height: 30px; border: none; background: transparent; cursor: pointer; font-size: 13px; color: var(--text-2); border-radius: 6px; }
 .win-btn:hover { background: var(--surface-2); }
 .win-btn.close:hover { background: #e81123; color: #fff; }
+
+/* 画布最大化：面板折叠按钮 */
+.collapse-btn { font-size: 11px; color: var(--muted); background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; cursor: pointer; margin-left: 8px; flex-shrink: 0; }
+.collapse-btn:hover { color: var(--primary-600); border-color: var(--border-strong); }
+.panel-toggle { width: 16px; border: none; background: var(--surface-2); color: var(--text-3); cursor: pointer; font-size: 11px; padding: 0; flex-shrink: 0; }
+.panel-toggle:hover { background: var(--primary-100); color: var(--primary-600); }
+.left-toggle { border-right: 1px solid var(--border); }
+.right-toggle { border-left: 1px solid var(--border); }
 
 /* 工具栏 */
 .toolbar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border); position: relative; z-index: 20; }
