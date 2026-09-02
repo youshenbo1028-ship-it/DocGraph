@@ -53,6 +53,14 @@ from .pipeline import extract_group, parse_document
 DATA_DIR = Path(os.environ.get("DOCGRAPH_DATA_DIR", str(user_data_dir() / "data")))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+# ---- 存储模式（v0.6 服务版）：设置 DOCGRAPH_DATABASE_URL 启用 PostgreSQL ----
+# 未设置时为 SQLite 便携模式（历史行为完全一致）。
+DATABASE_URL = os.environ.get("DOCGRAPH_DATABASE_URL") or None
+
+
+def storage_mode() -> str:
+    return "postgres" if DATABASE_URL else "sqlite"
+
 
 def _migrate_legacy_data() -> None:
     """把旧版本（启动目录相对 data/ 与 settings.json）迁移到稳定目录，避免用户数据丢失。"""
@@ -96,7 +104,7 @@ class _Registry:
     def open(self, project_id: str) -> ProjectStore:
         store = self._stores.get(project_id)
         if store is None:
-            store = ProjectStore(DATA_DIR / project_id)
+            store = ProjectStore(DATA_DIR / project_id, db_url=DATABASE_URL)
             if store.get_project(project_id) is None:
                 raise HTTPException(status_code=404, detail=f"项目不存在：{project_id}")
             self._stores[project_id] = store
@@ -168,26 +176,56 @@ def _dist_dir() -> Path | None:
 # ---------- 项目枚举 ----------
 
 def list_all_projects() -> list[dict]:
-    """扫描数据目录返回所有项目（含文档数），按创建时间倒序。"""
+    """返回所有项目（含文档数），按创建时间倒序。
+
+    SQLite 便携模式：扫描数据目录（只读打开每个 project.db）；
+    PostgreSQL 服务版：查元数据库注册表 + 逐项目统计文档数。
+    """
     out = []
-    if not DATA_DIR.exists():
-        return out
-    for d in DATA_DIR.iterdir():
-        if d.is_dir() and (d / "project.db").exists():
-            try:
-                con = sqlite3.connect(f"file:{d / 'project.db'}?mode=ro", uri=True)
-                row = con.execute(
-                    "SELECT p.id, p.name, p.created_at, "
-                    "(SELECT COUNT(*) FROM documents x WHERE x.project_id=p.id) AS doc_count "
-                    "FROM projects p"
-                ).fetchone()
-                con.close()
-                if row:
-                    out.append({"id": row[0], "name": row[1], "created_at": row[2], "doc_count": row[3]})
-            except sqlite3.Error:
-                pass
+    if DATABASE_URL:
+        try:
+            probe = ProjectStore(DATA_DIR / "_probe", db_url=DATABASE_URL)
+            for p in probe.list_projects():
+                out.append(
+                    {
+                        "id": p.id,
+                        "name": p.name,
+                        "created_at": p.created_at,
+                        "doc_count": _pg_doc_count(p.id),
+                    }
+                )
+            probe.close()
+        except Exception:
+            return out
+    else:
+        if not DATA_DIR.exists():
+            return out
+        for d in DATA_DIR.iterdir():
+            if d.is_dir() and (d / "project.db").exists():
+                try:
+                    con = sqlite3.connect(f"file:{d / 'project.db'}?mode=ro", uri=True)
+                    row = con.execute(
+                        "SELECT p.id, p.name, p.created_at, "
+                        "(SELECT COUNT(*) FROM documents x WHERE x.project_id=p.id) AS doc_count "
+                        "FROM projects p"
+                    ).fetchone()
+                    con.close()
+                    if row:
+                        out.append({"id": row[0], "name": row[1], "created_at": row[2], "doc_count": row[3]})
+                except sqlite3.Error:
+                    pass
     out.sort(key=lambda p: p["created_at"], reverse=True)
     return out
+
+
+def _pg_doc_count(project_id: str) -> int:
+    try:
+        s = ProjectStore(DATA_DIR / project_id, db_url=DATABASE_URL)
+        if s._db is None:
+            return 0
+        return s.count_documents(project_id)
+    except Exception:
+        return 0
 
 
 def resolve_active_project() -> str | None:
@@ -242,7 +280,7 @@ def _project_detail(store: ProjectStore, pid: str) -> dict:
 # ---------- 路由 ----------
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="DocGraph", version="0.5.2")
+    app = FastAPI(title="DocGraph", version="0.6.0")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],  # 本地桌面应用（开发模式前端在 5173）
@@ -252,7 +290,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health")
     def health() -> dict:
-        return {"status": "ok", "version": app.version}
+        return {"status": "ok", "version": app.version, "storage": storage_mode()}
 
     @app.get("/api/projects")
     def list_projects() -> list[dict]:
@@ -275,7 +313,7 @@ def create_app() -> FastAPI:
     @app.post("/api/projects")
     def create_project(req: ProjectCreate) -> dict:
         pid = uuid.uuid4().hex
-        store = ProjectStore(DATA_DIR / pid)
+        store = ProjectStore(DATA_DIR / pid, db_url=DATABASE_URL)
         store.create_project(req.name, project_id=pid)
         registry._stores[pid] = store
         return _project_detail(store, pid)
